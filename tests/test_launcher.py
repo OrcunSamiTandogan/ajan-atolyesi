@@ -120,8 +120,28 @@ class LauncherTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, f"{args[4]}={value}\n", "")
         with patch("shutil.which", return_value="/test/tmux"), patch("subprocess.run", side_effect=fake_run):
             self.assertEqual(APP["named_session"]("codex"), ("/test/tmux", "$9"))
-            self.assertEqual(APP["session_attachment"]("claude"), ("blocked", None))
+            self.assertEqual(APP["resolve_session"]("claude"), ("alternate", "aa-claude-atolye", None))
             self.assertEqual(APP["session_attachment"]("codex-other"), ("absent", None))
+
+    def test_launcher_reuses_only_owned_alternate_and_keeps_exact_identity(self):
+        owned = {("/test/tmux", "$21"), ("/test/tmux", "$22")}
+        resolver = APP["resolve_session"]
+        with patch.dict(resolver.__globals__, trusted_session=lambda _, target: target in owned):
+            with patch.dict(resolver.__globals__, tmux_candidates=lambda: {
+                "aa-codex": ("/test/tmux", "$4"),
+                "aa-codex-atolye": ("/test/tmux", "$21"),
+                "aa-claude": ("/test/tmux", "$3"),
+                "aa-claude-atolye": ("/test/tmux", "$7"),
+            }):
+                self.assertEqual(resolver("codex"), ("trusted", "aa-codex-atolye", ("/test/tmux", "$21")))
+                self.assertEqual(resolver("claude"), ("blocked", "aa-claude", None))
+            with patch.dict(resolver.__globals__, tmux_candidates=lambda: {
+                "aa-codex-atolye": ("/test/tmux", "$21"),
+                "aa-claude": ("/test/tmux", "$22"),
+                "aa-claude-atolye": ("/test/tmux", "$7"),
+            }):
+                self.assertEqual(resolver("codex"), ("trusted", "aa-codex-atolye", ("/test/tmux", "$21")))
+                self.assertEqual(resolver("claude"), ("trusted", "aa-claude", ("/test/tmux", "$22")))
 
     def test_cli_refuses_non_normal_unowned_and_replaced_sessions(self):
         launcher = Path(__file__).resolve().parents[1] / "bin/ajan-kur"
@@ -130,7 +150,7 @@ class LauncherTests(unittest.TestCase):
             tmux.write_text("""#!/bin/sh
 case "$1" in
   has-session) test "$3" = "=aa-codex" ;;
-  list-sessions) printf '%s\n' 'aa-codex-extra $1' 'aa-codex $9' ;;
+  list-sessions) printf '%s\n' 'aa-codex-extra $1' 'aa-codex $9'; test -z "$MOCK_ALT" || printf '%s\n' 'aa-codex-atolye $10' ;;
   show-environment)
     test "$3" = '$9' || exit 1
     case "$4" in
@@ -145,7 +165,7 @@ esac
             tmux.chmod(0o700)
             def launch(owner, mode, expected, entry="existing"):
                 env = {"PATH": f"{tmp}:/usr/bin:/bin", "HOME": tmp,
-                       "MOCK_OWNER": owner, "MOCK_MODE": mode}
+                       "MOCK_OWNER": owner, "MOCK_MODE": mode, "MOCK_ALT": "1" if entry == "normal" else ""}
                 return subprocess.run([launcher, "codex", entry, "plain", expected], input="",
                                       text=True, capture_output=True, env=env, timeout=5)
             owner = APP["PUBLIC_TMUX_OWNER"]

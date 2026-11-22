@@ -146,7 +146,8 @@ def tmux_role(role):
     return role if role in ("pi", "evren-cli") else agent_for(role)
 
 
-ATOLYE_TMUX_NAMES = ("aa-codex", "aa-claude", "aa-pi", "aa-evren-cli")
+ATOLYE_TMUX_NAMES = ("aa-codex", "aa-claude", "aa-pi", "aa-evren-cli", "aa-codex-atolye", "aa-claude-atolye")
+TMUX_ALTERNATES = {"codex": "aa-codex-atolye", "claude": "aa-claude-atolye"}
 PUBLIC_TMUX_OWNER = "ajan-atolyesi-public-v1"
 
 
@@ -189,18 +190,31 @@ def atolye_sessions():
             if trusted_session(name, target)}
 
 
-def session_attachment(agent):
+def resolve_session(agent):
     name = f"aa-{agent}"
-    if name not in ATOLYE_TMUX_NAMES:
-        return "absent", None
-    target = tmux_candidates().get(name)
-    if target is None:
-        return "absent", None
-    return ("trusted", target) if trusted_session(name, target) else ("blocked", None)
+    if name not in ATOLYE_TMUX_NAMES or name in TMUX_ALTERNATES.values():
+        return "absent", name, None
+    candidates = tmux_candidates()
+    target = candidates.get(name)
+    if target is not None and trusted_session(name, target):
+        return "trusted", name, target
+    alternate = TMUX_ALTERNATES.get(agent)
+    if alternate:
+        alternate_target = candidates.get(alternate)
+        if alternate_target is not None and trusted_session(alternate, alternate_target):
+            return "trusted", alternate, alternate_target
+        if target is not None and alternate_target is None:
+            return "alternate", alternate, None
+    return ("blocked", name, None) if target is not None else ("absent", name, None)
+
+
+def session_attachment(agent):
+    state, _, target = resolve_session(agent)
+    return state, target
 
 
 def named_session(agent):
-    return session_attachment(agent)[1]
+    return resolve_session(agent)[2]
 
 
 PI_TRUST_NOTICE = (
@@ -217,7 +231,8 @@ def session_reminder(sessions):
         "Ajan Atölyesi oturum hatırlatıcısı\n\n"
         f"Hatırlatıcı açıldığında görülen tmux hedefleri: {live or 'doğrulanmış açık hedef yok'}.\n"
         "Olası hedefler: aa-codex (Codex), aa-claude (Claude), aa-pi (Pi · NVIDIA), "
-        "aa-evren-cli (EVREN DSH CLI). DSH Web ve normal Terminal birer tmux hedefi değildir.\n\n"
+        "aa-evren-cli (EVREN DSH CLI). Ad çakışırsa doğrulanmış aa-codex-atolye veya "
+        "aa-claude-atolye kullanılabilir. DSH Web ve normal Terminal birer tmux hedefi değildir.\n\n"
         "Yalnız kullanıcı başka oturuma mesaj göndermeni istediğinde gönder. "
         "Önce normal tmux sunucusunda tam adı ve açık paneli yeniden kontrol et. "
         "Seçili proje klasörü ile açık panelin klasörü aynı olmayabilir; gerekiyorsa ikisini de doğrula. "
@@ -874,10 +889,11 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
             return
         agent = agent_for(role)
         tmux_target = tmux_role(role)
-        attachment, identified = session_attachment(tmux_target)
+        attachment, selected_name, identified = resolve_session(tmux_target)
         if attachment == "blocked":
-            status.set_text("Bu adlı oturum Atölye’nin normal oturumu olarak doğrulanamadı. "
-                            "Bağlanılmadı; mevcut oturum değiştirilmedi.")
+            status.set_text(("Asıl ad ve Atölye’ye ayrılan ad başka oturumlara ait. "
+                             if agent else "Bu oturum Atölye oturumu olarak doğrulanamadı. ") +
+                            "Bağlanılmadı; mevcut oturumlar değiştirilmedi.")
             return
         existing = attachment == "trusted"
         setup = role in ("setup-claude", "setup-codex")
@@ -914,6 +930,10 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
         status.set_text("Açık oturuma bağlanılıyor; kurulum gönderilmeyecek."
                         if existing and role.startswith("setup-")
                         else label)
+        if attachment == "alternate":
+            status.set_text(f"Asıl ad başka bir oturuma ait. Dokunulmadı; Atölye hedefi: {selected_name}.")
+        elif existing and selected_name in TMUX_ALTERNATES.values():
+            status.set_text(f"Atölye oturumuna bağlanılıyor: {selected_name}. Kurulum yeniden gönderilmeyecek.")
         terminal.connect("child-exited", lambda *_: process_closed(role))
         terminal.connect("contents-changed", terminal_activity, role)
         terminal_activity(terminal, role)
@@ -938,13 +958,13 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
 
     def close_session(_button, role, label):
         agent = tmux_role(role)
-        target = named_session(agent)
+        _, resolved_name, target = resolve_session(agent)
         if role not in running and not target:
             status.set_text("Kapatılacak açık oturum yok.")
             if role in pages:
                 right.remove(pages.pop(role))
             return
-        name = f"aa-{agent}" if target else label
+        name = resolved_name if target else label
         dialog = Gtk.MessageDialog(transient_for=win, modal=True,
                                    message_type=Gtk.MessageType.WARNING,
                                    text=f"{name} kapatılsın mı?")
@@ -957,7 +977,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
         if response != Gtk.ResponseType.OK:
             return
         if target:
-            if named_session(agent) != target:
+            if resolve_session(agent)[1:] != (resolved_name, target):
                 status.set_text("Oturum değişti. Hiçbir oturum kapatılmadı.")
                 return
             try:
@@ -1093,11 +1113,10 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
 
     def copy_session_identity(_item, role):
         agent = tmux_role(role)
-        target = named_session(agent)
+        _, identity, target = resolve_session(agent)
         if not target:
             status.set_text("Oturum kapalı. Önce oturumu aç.")
             return
-        identity = f"aa-{agent}"
         clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
         clipboard.set_text(identity, -1)
         clipboard.store()

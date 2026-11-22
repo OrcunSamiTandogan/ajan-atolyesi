@@ -57,23 +57,46 @@ if [[ "$mode" == existing ]]; then
 fi
 case "$kind:$selection" in setup:|setup:pi|setup:evren|setup:both|plain:) ;; *) exit 2 ;; esac
 
-checked_id() {
+canonical=$session
+alternate=$canonical-atolye
+
+session_id() {
+  local exact=$1
   local listed name id other found=''
   listed="$(tmux list-sessions -F '#{session_name} #{session_id}' 2>/dev/null)" || return 1
   while IFS=' ' read -r name id other; do
-    if [[ "$name" == "$session" && "$id" =~ ^\$[0-9]+$ && -z "$other" ]]; then
+    if [[ "$name" == "$exact" && "$id" =~ ^\$[0-9]+$ && -z "$other" ]]; then
       [[ -z "$found" ]] || return 1
       found=$id
     fi
   done <<< "$listed"
   [[ -n "$found" ]] || return 1
-  [[ "$(tmux show-environment -t "$found" AA_ATOLYE_OWNER 2>/dev/null)" == "AA_ATOLYE_OWNER=$owner" ]] || return 1
-  [[ "$(tmux show-environment -t "$found" AA_SETUP_MODE 2>/dev/null)" == 'AA_SETUP_MODE=normal' ]] || return 1
   printf '%s\n' "$found"
+}
+is_owned() {
+  local id=$1
+  [[ "$(tmux show-environment -t "$id" AA_ATOLYE_OWNER 2>/dev/null)" == "AA_ATOLYE_OWNER=$owner" ]] &&
+  [[ "$(tmux show-environment -t "$id" AA_SETUP_MODE 2>/dev/null)" == 'AA_SETUP_MODE=normal' ]]
+}
+resolve_session() {
+  local canonical_id alternate_id
+  canonical_id="$(session_id "$canonical")" || canonical_id=
+  alternate_id="$(session_id "$alternate")" || alternate_id=
+  session=$canonical
+  resolved_id=
+  if [[ -n "$canonical_id" ]] && is_owned "$canonical_id"; then
+    resolved_id=$canonical_id
+  elif [[ -n "$alternate_id" ]] && is_owned "$alternate_id"; then
+    session=$alternate
+    resolved_id=$alternate_id
+  elif [[ -n "$canonical_id" ]]; then
+    session=$alternate
+    [[ -z "$alternate_id" ]] || return 1
+  fi
 }
 attach_checked() {
   local id
-  if ! id="$(checked_id)" || [[ -n ${expected:-} && "$id" != "$expected" ]]; then
+  if ! id="$(session_id "$session")" || ! is_owned "$id" || [[ -n ${expected:-} && "$id" != "$expected" ]]; then
     printf 'Mevcut %s oturumu Atölye’nin normal oturumu olarak doğrulanamadı. Bağlanılmadı.\n' "$session" >&2
     exit 1
   fi
@@ -82,6 +105,10 @@ attach_checked() {
 }
 if [[ "$mode" == existing ]]; then
   command -v tmux >/dev/null || exit 1
+  if ! resolve_session || [[ -z "$resolved_id" ]]; then
+    printf 'Doğrulanmış bir Atölye oturumu bulunamadı. Bağlanılmadı.\n' >&2
+    exit 1
+  fi
   attach_checked
 fi
 if ! command -v tmux >/dev/null; then
@@ -95,12 +122,20 @@ if ! command -v tmux >/dev/null; then
   sudo apt-get install tmux || hold
   hash -r
 fi
-if tmux has-session -t "=$session" 2>/dev/null; then
+if ! resolve_session; then
+  printf '%s ve %s adları başka oturumlara ait. Bağlanılmadı; bu oturumlara dokunulmadı.\n' "$canonical" "$alternate" >&2
+  exit 1
+fi
+if [[ -n "$resolved_id" ]]; then
+  expected=$resolved_id
   attach_checked
 fi
 if ! agent=$(command -v "$1"); then
   printf '%s bulunamadı. Önce resmî aracı kur: %s\n' "$1" "$guide"
   hold
+fi
+if [[ "$session" == "$alternate" ]]; then
+  printf '%s başka bir oturuma ait. Bu oturuma dokunulmadı; Atölye hedefi: %s.\n' "$canonical" "$session"
 fi
 if [[ -n ${TMUX:-} ]]; then
   tmux new-session -d -s "$session" -c "$PWD" -e "AA_SETUP_MODE=normal" -e "AA_ATOLYE_OWNER=$owner" "$here/ajan-kur" --pane "$1" "$mode" "$agent" "$kind" "$selection"
