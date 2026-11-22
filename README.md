@@ -58,7 +58,7 @@ Yollar bağımsız. Yalnız EVREN’i kullanacaksan NVIDIA anahtarı, yalnız NV
 
 | Düğme | Ne yapar? |
 |---|---|
-| **Codex oturumu / Claude oturumu** | İlgili komut ayrı kurulmuşsa terminali açar veya `aa-codex` / `aa-claude` oturumuna döner. Yeni oturum normal izinlerle açılır. Hesap geliştirici aracında açılır, Atölye'ye Claude/Codex anahtarı girmen gerekmez. |
+| **Codex oturumu / Claude oturumu** | İlgili komut ayrı kurulmuşsa terminali açar veya `aa-codex` / `aa-claude` oturumuna döner. Bu ad dışarıdan açılmış bir oturuma aitse ona dokunmaz; kendi `aa-codex-atolye` veya `aa-claude-atolye` oturumunu açar. Sonraki tıklamada doğrulanmış Atölye oturumuna döner. Yeni oturum normal izinlerle açılır. Hesap geliştirici aracında açılır, Atölye'ye Claude/Codex anahtarı girmen gerekmez. |
 | **Codex ile kur / Claude ile kur** | Yeni oturumdan önce **Pi + NVIDIA**, **EVREN + DeepSeek** veya ikisini işaretle. Kurulum promptu yalnız seçtiklerini içerir. Yalnız Atölye’nin tanıdığı normal oturumlara dönülür. Mevcut oturuma kurulum promptu otomatik gönderilmez. |
 | **EVREN · DSH CLI** | Resmî **DeepSeek Harness SDK** sürecini `aa-evren-cli` tmux oturumunda açar. Tarayıcı açmaz. **DSH >** satırına mesaj yaz; yanıtın altında bildirilen cache ve token sayaçlarını gör. |
 | **EVREN · DSH Web** | Tarayıcıda **resmî DeepSeek Harness** açar. İki yol da aynı dsh kurulumunu ve EVREN’de DeepSeek V4.1 Flash modelini kullanır. [Adımlar](docs/evren-dsh.md) |
