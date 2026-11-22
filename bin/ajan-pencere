@@ -16,9 +16,9 @@ OPTIONS = (
     ("Codex ile kur", "setup-codex"),
     ("Codex oturumu", "codex"),
     ("Claude oturumu", "claude"),
-    ("Pi · NVIDIA", "pi"),
-    ("EVREN · DSH CLI", "evren-cli"),
-    ("EVREN · DSH Web", "evren"),
+    ("Pi", "pi"),
+    ("DSH CLI", "evren-cli"),
+    ("DSH Web", "evren"),
     ("Terminal", "terminal"),
 )
 ICONS = (
@@ -49,7 +49,7 @@ PI_PACKAGE = "@earendil-works/pi-coding-agent@1.6.0"
 PI_GUIDE = "https://docs.pi.dev/latest/quickstart"
 REPO_URL = "https://github.com/OrcunSamiTandogan/ajan-atolyesi"
 FAQ_URL = REPO_URL + "/blob/master/docs/sss.md"
-ABOUT_TEXT = ("Codex, Claude Code, Pi + NVIDIA ve EVREN + DeepSeek Harness oturumları için "
+ABOUT_TEXT = ("Codex, Claude Code, Pi ve DeepSeek Harness (DSH) oturumları için "
               "yerel masaüstü başlatıcısı.\n\n"
               "DSH CLI ve DSH Web ayrı açılır. Ayrıca bağımsız bir Terminal vardır.")
 KEY = re.compile(r"nvapi-[A-Za-z0-9_.-]{8,500}")
@@ -230,8 +230,8 @@ def session_reminder(sessions):
     return (
         "Ajan Atölyesi oturum hatırlatıcısı\n\n"
         f"Hatırlatıcı açıldığında görülen tmux hedefleri: {live or 'doğrulanmış açık hedef yok'}.\n"
-        "Olası hedefler: aa-codex (Codex), aa-claude (Claude), aa-pi (Pi · NVIDIA), "
-        "aa-evren-cli (EVREN DSH CLI). Ad çakışırsa doğrulanmış aa-codex-atolye veya "
+        "Olası hedefler: aa-codex (Codex), aa-claude (Claude), aa-pi (Pi), "
+        "aa-evren-cli (DSH CLI). Ad çakışırsa doğrulanmış aa-codex-atolye veya "
         "aa-claude-atolye kullanılabilir. DSH Web ve normal Terminal birer tmux hedefi değildir.\n\n"
         "Yalnız kullanıcı başka oturuma mesaj göndermeni istediğinde gönder. "
         "Önce normal tmux sunucusunda tam adı ve açık paneli yeniden kontrol et. "
@@ -398,7 +398,7 @@ def dsh_install_command():
 def pi_tmux(expected_id=None):
     tmux = shutil.which("tmux")
     if not tmux:
-        print("Pi · NVIDIA için önce tmux kur.", file=sys.stderr)
+        print("Pi için önce tmux kur.", file=sys.stderr)
         return 1
     # Only the Pi process inside the pane reads its saved provider key.
     keep = ("HOME", "USER", "LOGNAME", "PATH", "SHELL", "TERM", "COLORTERM",
@@ -422,7 +422,7 @@ def pi_tmux(expected_id=None):
             expected_id = result.stdout.strip()
             attachment, target = session_attachment("pi")
     if attachment != "trusted" or (expected_id is not None and target[1] != expected_id):
-        print("aa-pi oturumu doğrulanamadı. Pi · NVIDIA’yı tekrar aç.", file=sys.stderr)
+        print("aa-pi oturumu doğrulanamadı. Pi’yi tekrar aç.", file=sys.stderr)
         return 1
     command = "switch-client" if env.get("TMUX") else "attach-session"
     os.execve(tmux, [tmux, command, "-E", "-t", target[1]], env)
@@ -607,7 +607,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
     empty_title = Gtk.Label()
     empty_title.set_markup("<big><b>Bir oturum seç</b></big>")
     empty.pack_start(empty_title, False, False, 0)
-    empty.pack_start(Gtk.Label(label="İlk kullanım: anahtarını kaydet, sonra Pi · NVIDIA, DSH CLI veya DSH Web’e tıkla.", wrap=True), False, False, 0)
+    empty.pack_start(Gtk.Label(label="İlk kullanım: anahtarını kaydet, sonra Pi, DSH CLI veya DSH Web’e tıkla.", wrap=True), False, False, 0)
     empty.pack_start(Gtk.Label(label="Claude veya Codex hesabı şart değil.", wrap=True), False, False, 0)
     open_keys = Gtk.Button(label="Anahtarları aç")
     empty.pack_start(open_keys, False, False, 6)
@@ -648,7 +648,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
     right.add_named(install_pi_page, "pi-install")
     evren_setup = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
                          halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
-    evren_setup.pack_start(Gtk.Label(label="EVREN · DeepSeek V4.1 Flash"), False, False, 0)
+    evren_setup.pack_start(Gtk.Label(label="Sağlayıcı: EVREN · Model: DeepSeek V4.1 Flash"), False, False, 0)
     evren_detail = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
     evren_setup.pack_start(evren_detail, False, False, 0)
     install_dsh_action = Gtk.Button(label="dsh’yi kur")
@@ -765,15 +765,15 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
             text="Neyi kurmak istiyorsun?")
         dialog.set_title("Kurulum seçenekleri")
         dialog.format_secondary_text(
-            "Ajanın normal izin kontrolleri açık kalır. Yalnızca işaretlediğin yollar "
+            "Ajanın normal izin kontrolleri açık kalır. Yalnızca işaretlediğin araçlar "
             "kurulum isteğine eklenir.")
         dialog.add_button("Vazgeç", Gtk.ResponseType.CANCEL)
         dialog.add_button("Normal aç", Gtk.ResponseType.OK)
         dialog.set_default_response(Gtk.ResponseType.CANCEL)
         group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         group.set_margin_top(12)
-        pi = Gtk.CheckButton(label="Pi + NVIDIA")
-        evren = Gtk.CheckButton(label="EVREN + DeepSeek (DSH CLI ve Web)")
+        pi = Gtk.CheckButton(label="Pi")
+        evren = Gtk.CheckButton(label="DSH (CLI ve Web)")
         for item in (pi, evren):
             group.pack_start(item, False, False, 0)
         dialog.get_message_area().pack_start(group, False, False, 0)
@@ -794,8 +794,8 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
     def confirm_pi_folder(folder):
         dialog = Gtk.MessageDialog(
             transient_for=win, modal=True, message_type=Gtk.MessageType.WARNING,
-            text="Pi · NVIDIA yalnız güvenilir klasörde açılmalı")
-        dialog.set_title("Pi · NVIDIA güvenilir klasör")
+            text="Pi yalnız güvenilir klasörde açılmalı")
+        dialog.set_title("Pi güvenilir klasör")
         dialog.format_secondary_text(f"{folder}\n\n{PI_TRUST_NOTICE}")
         dialog.add_button("Vazgeç", Gtk.ResponseType.CANCEL)
         dialog.add_button("Bu klasörde aç", Gtk.ResponseType.OK)
@@ -840,7 +840,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
             workdir.cleanup()
             action.set_sensitive(True)
             if ready:
-                status.set_text("Pi kuruldu. Şimdi Pi · NVIDIA’ya tıkla." if is_pi else "dsh kuruldu. Şimdi DSH CLI veya DSH Web’e tıkla.")
+                status.set_text("Pi kuruldu. Şimdi Pi’ye tıkla." if is_pi else "dsh kuruldu. Şimdi DSH CLI veya DSH Web’e tıkla.")
                 if right.get_visible_child() is page:
                     right.set_visible_child(empty)
             else:
@@ -885,7 +885,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
                 install_detail.set_text("Claude veya Codex gerekmez. Kurulum yalnız bu kullanıcıya yapılır.")
             return
         if role == "pi" and not shutil.which("tmux"):
-            status.set_text("Pi · NVIDIA için sisteminin paket yöneticisinden tmux kur.")
+            status.set_text("Pi için sisteminin paket yöneticisinden tmux kur.")
             return
         agent = agent_for(role)
         tmux_target = tmux_role(role)
@@ -903,7 +903,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
             chooser.grab_focus()
             return
         if agent and not existing and not shutil.which(agent):
-            status.set_text(f"{agent.capitalize()} bulunamadı. İlk kullanım için Pi · NVIDIA’yı seçebilirsin.")
+            status.set_text(f"{agent.capitalize()} bulunamadı. İlk kullanım için Pi’yi seçebilirsin.")
             return
         if role == "pi" and not existing and not smoke_terminal:
             if not confirm_pi_folder(folder):
@@ -1044,7 +1044,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
         area.set_spacing(10)
         area.set_border_width(16)
         detail = ("Yalnız Atölye'den açılan Pi'ye verilir." if name == "NVIDIA" else
-                  "Yalnız EVREN · DSH CLI ve DSH Web’de kullanılır.")
+                  "Yalnız DSH CLI ve DSH Web’de kullanılır.")
         text = Gtk.Label(label="Anahtar proje dışında yerel .env dosyasında tutulur.\n" + detail, xalign=0)
         entry = Gtk.Entry(visibility=False)
         entry.set_input_purpose(Gtk.InputPurpose.PASSWORD)

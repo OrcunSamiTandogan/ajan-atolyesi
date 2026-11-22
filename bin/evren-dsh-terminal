@@ -302,7 +302,7 @@ def run_web(binary, patch, folder, env, *, launch_browser):
                 elif not launch_browser:
                     print("DeepSeek Harness hazır.", flush=True)
                 else:
-                    print("Varsayılan tarayıcı açılamadı. Tarayıcını ayarlayıp EVREN · DSH Web’e yeniden tıkla.", flush=True)
+                    print("Varsayılan tarayıcı açılamadı. Tarayıcını ayarlayıp DSH Web’e yeniden tıkla.", flush=True)
                     return 1
         status = process.wait()
         if not shown:
@@ -449,7 +449,7 @@ def interactive_cli(binary, patch, folder, env, failures):
             import readline
         except ImportError:
             pass
-    print("EVREN · DeepSeek V4.1 Flash | DeepSeek Harness SDK", flush=True)
+    print("DSH CLI | Sağlayıcı: EVREN · Model: DeepSeek V4.1 Flash", flush=True)
     with subprocess.Popen(sdk_command(binary, patch), cwd=folder, env=env,
                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                           encoding="utf-8", bufsize=1) as process:
@@ -541,7 +541,7 @@ def main():
         return 1
     binary = app["dsh_binary"]()
     if not binary:
-        print("dsh bulunamadı. Soldan EVREN · DSH Web’e tekrar tıkla.", flush=True)
+        print("dsh bulunamadı. Soldan DSH CLI veya DSH Web’e tekrar tıkla.", flush=True)
         return 1
     with tempfile.TemporaryDirectory(prefix="ajan-evren-") as tmp:
         folder = Path(tmp)

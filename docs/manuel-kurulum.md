@@ -12,7 +12,7 @@ tmux new-session -A -s aa-manuel
 
 `Ctrl+b` tuşlarına basıp bırak, sonra `c` tuşuna bas: ikinci bir terminal sekmesi açılır. `Ctrl+b`, sonra `n` ile iki sekme arasında geç. `Ctrl+b`, sonra `d` oturumu kapatmadan ayırır. Geri dönmek için tekrar yukarıdaki komutu çalıştır. [tmux kılavuzu](https://github.com/tmux/tmux/wiki/Getting-Started)
 
-## 2. İlk sekme: Pi ve NVIDIA
+## 2. İlk sekme: Pi (sağlayıcı: NVIDIA)
 
 1. [Pi'yi resmî kılavuzdan kur](https://docs.pi.dev/latest/quickstart). `pi --version` ile kontrol et.
 2. `pi` aç. Pi içinde **/login → NVIDIA NIM** seç ve NVIDIA anahtarını yalnızca Pi'nin anahtar ekranına gir. Sonra **/model** ile modeli seç. Anahtar sohbet girdisi değildir.
@@ -63,6 +63,6 @@ Bu istek **DeepSeek hesabının** ücret ve kullanım sınırlarına tabidir. EV
 python3 bin/evren-baglanti-kontrol
 ```
 
-EVREN anahtarını görünmeyen alana gir. Komut yalnız EVREN'deki model listesini okur ve **DeepSeek V4.1 Flash** listede mi söyler. Model çağırmaz ve anahtarı kaydetmez. **EVREN anahtarını `DEEPSEEK_API_KEY` olarak dsh'ye verme.** Atölye'de **EVREN · DSH CLI** tmux içindeki resmî Harness SDK oturumunu, **EVREN · DSH Web** resmî tarayıcı arayüzünü açar. Rehber: [EVREN · DeepSeek Harness](evren-dsh.md). [Durum ve teknik not](evren-dsh.md)
+EVREN anahtarını görünmeyen alana gir. Komut yalnız EVREN'deki model listesini okur ve **DeepSeek V4.1 Flash** listede mi söyler. Model çağırmaz ve anahtarı kaydetmez. **EVREN anahtarını `DEEPSEEK_API_KEY` olarak dsh'ye verme.** Atölye'de **DSH CLI** tmux içindeki resmî Harness SDK oturumunu, **DSH Web** resmî tarayıcı arayüzünü açar. Rehber: [DeepSeek Harness (DSH)](evren-dsh.md). [Durum ve teknik not](evren-dsh.md)
 
 Gerçek anahtarları prompt'a, komut satırına, ekran görüntüsüne veya Git'e koyma.

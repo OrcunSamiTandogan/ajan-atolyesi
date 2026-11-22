@@ -33,14 +33,19 @@ class LauncherTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             APP["session_command"]("evren", "unsafe")
 
-    def test_setup_prompt_only_mentions_checked_providers(self):
+    def test_setup_prompt_only_mentions_checked_harnesses(self):
         launcher = Path(__file__).resolve().parents[1] / "bin/ajan-kur"
-        for choice, included in (("pi", ("Pi + NVIDIA",)), ("evren", ("EVREN + DeepSeek",)),
-                                 ("both", ("Pi + NVIDIA", "EVREN + DeepSeek"))):
+        for choice, included in (("pi", ("- Pi:",)), ("evren", ("- DSH (CLI ve Web):",)),
+                                 ("both", ("- Pi:", "- DSH (CLI ve Web):"))):
             prompt = subprocess.check_output([launcher, "--print-setup-prompt", choice], text=True)
             self.assertIn("tekrar seçim sorma", prompt)
             self.assertIn("Model çağrısı yapma", prompt)
-            for label in ("Pi + NVIDIA", "EVREN + DeepSeek"):
+            self.assertIn("Bileşen | Durum | Kanıt", prompt)
+            self.assertEqual("NVIDIA anahtarı" in prompt, choice in ("pi", "both"))
+            self.assertEqual("EVREN anahtarı" in prompt, choice in ("evren", "both"))
+            self.assertNotIn("Pi + NVIDIA", prompt)
+            self.assertNotIn("EVREN + DeepSeek", prompt)
+            for label in ("- Pi:", "- DSH (CLI ve Web):"):
                 self.assertEqual(label in prompt, label in included)
         bad = subprocess.run([launcher, "--print-setup-prompt", "pi; unexpected"], capture_output=True)
         self.assertEqual(bad.returncode, 2)

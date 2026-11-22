@@ -6,15 +6,15 @@ render_setup_prompt() {
   case "$selection" in pi|evren|both|ask) ;; *) return 2 ;; esac
   cat "$here/../KURULUM-PROMPTU.md" || return
   if [[ "$selection" == ask ]]; then
-    printf '\nSeçim belirtilmedi. Pi + NVIDIA, EVREN + DeepSeek veya ikisini mi istediğini sor. Yanıt gelmeden kurma.\n'
+    printf '\nSeçim belirtilmedi. Pi, DSH veya ikisini mi istediğini sor. Yanıt gelmeden kurma.\n'
     return
   fi
   printf '\nKullanıcının seçimi kesin; tekrar seçim sorma. Yalnız aşağıdaki maddeleri uygula.\n'
   if [[ "$selection" == pi || "$selection" == both ]]; then
-    printf '%s\n' '- Pi + NVIDIA: Node.js 22.19+, npm ve tmux. Pi sürümü ve kurulum için https://docs.pi.dev/latest/quickstart. Sonraki adım: NVIDIA anahtarı → Kaydet → proje seç → Pi · NVIDIA. tmux hedefi: aa-pi.'
+    printf '%s\n' '- Pi: Node.js 22.19+, npm ve tmux. Kurulu aracı pi --version ile kontrol et. Pi sürümü ve kurulum için https://docs.pi.dev/latest/quickstart. Sonraki adım: NVIDIA anahtarı → Kaydet → proje seç → Pi. tmux hedefi: aa-pi.'
   fi
   if [[ "$selection" == evren || "$selection" == both ]]; then
-    printf '%s\n' '- EVREN + DeepSeek: Node.js 24.9+ ve npm. DSH CLI için tmux. dsh sürümü ve kurulum için https://github.com/deepseek-ai/deepseek-harness/tree/master/apps/cli. Sonraki adım: EVREN anahtarı → Kaydet → EVREN · DSH CLI veya EVREN · DSH Web. CLI tmux hedefi: aa-evren-cli.'
+    printf '%s\n' '- DSH (CLI ve Web): Node.js 24.9+ ve npm. DSH CLI için tmux. Kurulu aracı dsh --version ile kontrol et. dsh sürümü ve kurulum için https://github.com/deepseek-ai/deepseek-harness/tree/master/apps/cli. Sonraki adım: EVREN anahtarı → Kaydet → DSH CLI veya DSH Web. CLI tmux hedefi: aa-evren-cli.'
   fi
 }
 if [[ ${1:-} == --print-setup-prompt ]]; then

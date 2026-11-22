@@ -19,7 +19,7 @@ Açılmazsa aşağıdaki ilk komut paketleri ve uygun Homebrew Python'u pencere 
 "$HOME/Applications/Ajan Atölyesi.app/Contents/MacOS/ajan-atolyesi" --check-terminal
 ```
 
-Pi veya EVREN DSH için uygulamanın **Terminal** satırında `node -v` ve `npm -v` çalıştır. Uygulama kabuk başlangıç dosyalarını okumaz; yalnız shell oturumunda etkinleşen nvm/fnm gibi bir kurulum Finder'dan görünmeyebilir. Desteklenen sürümler ve elle kurulum için [Sorun giderme](sss.md). Claude ve Codex'i kullanacaksan ayrıca kendi resmî kurulumlarını ve hesabını hazırla.
+Pi veya DSH için uygulamanın **Terminal** satırında `node -v` ve `npm -v` çalıştır. Uygulama kabuk başlangıç dosyalarını okumaz; yalnız shell oturumunda etkinleşen nvm/fnm gibi bir kurulum Finder'dan görünmeyebilir. Desteklenen sürümler ve elle kurulum için [Sorun giderme](sss.md). Claude ve Codex'i kullanacaksan ayrıca kendi resmî kurulumlarını ve hesabını hazırla.
 
 Apple bir güvenlik uyarısı gösterirse kaynağı doğrula ve [Apple'ın uyarı açıklamasına](https://support.apple.com/en-us/102445) bak; Gatekeeper'ı kapatma. Homebrew paketleri: [VTE](https://formulae.brew.sh/formula/vte3), [PyGObject](https://formulae.brew.sh/formula/pygobject3).
 

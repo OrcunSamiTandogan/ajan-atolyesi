@@ -3,7 +3,7 @@
 ## İlk kurulum
 
 **Claude veya Codex olmadan kullanabilir miyim?**
-Evet. Atölye'yi kur, **NVIDIA anahtarı**'na tıkla, anahtarını kaydet, örnek ZIP klasörünü seç ve **Pi · NVIDIA**'ya tıkla. Pi yoksa **Pi’yi kur**'a bas. NVIDIA rotasında dsh ve Claude/Codex hesabı gerekmez.
+Evet. Atölye'yi kur, **NVIDIA anahtarı**'na tıkla, anahtarını kaydet, örnek ZIP klasörünü seç ve **Pi**'ye tıkla. Pi yoksa **Pi’yi kur**'a bas. Pi rotasında dsh ve Claude/Codex hesabı gerekmez.
 
 **Pi kurulmadı veya Node/npm bulunamadı. Ne yapmalıyım?**
 Pi'nin npm kurulumu Node.js **22.19 veya üzeri** ister. [Pi'nin resmî rehberindeki](https://docs.pi.dev/latest/quickstart) kurucuyu kullanabilir veya güncel [Node.js](https://nodejs.org/) ve npm kurabilirsin. Windows'ta bunu Windows'a değil Ubuntu/WSL içine yap. Atölye'yi kapatıp yeniden aç. Aynı hata kalırsa normal terminalden `pi --version` çalıştır; uygulama menüsünün, yalnız terminal oturumunda ayarlanmış PATH'i görmeyebileceğini unutma.
@@ -42,9 +42,11 @@ Pi'de **Esc** ile bekleyen işi durdur, `/model` yaz, başka bir model seç. Min
 **NVIDIA kartı gerekir mi?**
 Hayır. Bu rota NVIDIA'nın sunucularındaki API'yi kullanır. Hesabın, internet bağlantın ve model erişimin gerekir. Kota ve ücret sağlayıcının hesabına bağlıdır.
 
-## EVREN · DSH CLI ve DSH Web farkı ne?
+<a id="evren--dsh-cli-ve-dsh-web-farkı-ne" name="evren--dsh-cli-ve-dsh-web-farkı-ne"></a>
 
-**EVREN · DSH CLI** tarayıcı açmadan `aa-evren-cli` tmux oturumuna bağlanır. **DSH >** satırına doğrudan mesaj yazıp Enter’a bas; Atölye mesajları tek resmî DSH SDK sürecine iletir. Cache ve token sayaçları varsa yanıt altında görünür. **EVREN · DSH Web** ise DeepSeek’in kendi tarayıcı arayüzünü açar. İkisi aynı kayıtlı EVREN anahtarını ve DeepSeek V4.1 Flash’ı kullanır. [İlk kullanım rehberi](evren-dsh.md).
+## DSH CLI ve DSH Web farkı ne?
+
+**DSH CLI** tarayıcı açmadan `aa-evren-cli` tmux oturumuna bağlanır. **DSH >** satırına doğrudan mesaj yazıp Enter’a bas; Atölye mesajları tek resmî DSH SDK sürecine iletir. Cache ve token sayaçları varsa yanıt altında görünür. **DSH Web** ise DeepSeek’in kendi tarayıcı arayüzünü açar. İkisi aynı kayıtlı EVREN anahtarını ve DeepSeek V4.1 Flash’ı kullanır. [İlk kullanım rehberi](evren-dsh.md).
 
 ## Oturumlar ve güvenlik
 
@@ -61,7 +63,7 @@ Koyu nokta terminalin kapalı, yeşil açık, mavi yakın zamanda ekrana çıkt�
 Sol menünün başlığındaki **Oturum hatırlatıcısı** simgesinden **Panoya kopyala**’yı seç, sonra metni ajanın mesaj alanına yapıştır. Metin, açıldığı anda görülen tam tmux adlarını ve gönderim kontrollerini içerir. Çalışan ajanın sistem ayarını değiştirmez ve hiçbir oturuma otomatik mesaj göndermez.
 
 **Açık oturumun kimliğini nasıl kopyalarım?**
-**Codex oturumu**, **Claude oturumu**, **Pi · NVIDIA** veya **EVREN · DSH CLI** satırına sağ tıkla, **Oturum kimliğini kopyala**’yı seç. Panoya aynı makinedeki açık oturumun gerçek tmux adı gider (örneğin `aa-codex`, `aa-codex-atolye` veya `aa-pi`). Bir ajana hedef verirken tahmin etmek yerine bu kopyalanan adı kullan. Bu işlem tek başına görev göndermez. Klasör seçiciyi değiştirmen açık tmux oturumunu taşımaz. Seçili klasör farklıysa Atölye, açık panelin klasörünü ayrıca gösterir. Kapalı oturumlar ile tmux kullanmayan DSH Web ve normal Terminal satırlarında seçenek pasiftir.
+**Codex oturumu**, **Claude oturumu**, **Pi** veya **DSH CLI** satırına sağ tıkla, **Oturum kimliğini kopyala**’yı seç. Panoya aynı makinedeki açık oturumun gerçek tmux adı gider (örneğin `aa-codex`, `aa-codex-atolye` veya `aa-pi`). Bir ajana hedef verirken tahmin etmek yerine bu kopyalanan adı kullan. Bu işlem tek başına görev göndermez. Klasör seçiciyi değiştirmen açık tmux oturumunu taşımaz. Seçili klasör farklıysa Atölye, açık panelin klasörünü ayrıca gösterir. Kapalı oturumlar ile tmux kullanmayan DSH Web ve normal Terminal satırlarında seçenek pasiftir.
 
 **Hangi izinlerle açılır?**
 Bu dağıtım izinleri atlayan bir mod sunmaz. Normal mod, kullandığın aracın kendi onay ve erişim ayarlarına tabidir. tmux bir güvenlik katmanı değildir. Güvenmediğin repo, eklenti veya dışarıdan gelen PR'ları anahtarların ve hesapların olan bir bilgisayarda çalıştırma. Atölye'nin başlattığı Pi ve onun alt süreçleri NVIDIA anahtarına erişebilir; ilk denemede örnek projeyi kullan.
