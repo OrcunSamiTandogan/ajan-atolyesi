@@ -126,7 +126,7 @@ cat > "$staged" <<PLIST
 <plist version="1.0"><dict>
 <key>CFBundleName</key><string>Ajan Atölyesi</string>
 <key>CFBundleDisplayName</key><string>Ajan Atölyesi</string>
-<key>CFBundleIdentifier</key><string>app.icerikler.ajan-atolyesi</string>
+<key>CFBundleIdentifier</key><string>io.github.orcunsamitandogan.ajan-atolyesi</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleExecutable</key><string>ajan-atolyesi</string>
 <key>CFBundleIconFile</key><string>ajan-atolyesi.icns</string>
