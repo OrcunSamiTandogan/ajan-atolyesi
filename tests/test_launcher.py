@@ -74,6 +74,48 @@ class LauncherTests(unittest.TestCase):
             self.assertIn("Bu bir kurulum isteği değildir.", launched.stdout)
             self.assertNotIn("NVIDIA anahtarı → Kaydet", launched.stdout)
 
+    def test_full_permissions_are_separate_plain_launch_option_only(self):
+        launcher = Path(__file__).resolve().parents[1] / "bin/ajan-kur"
+        command = APP["session_command"]
+        self.assertEqual(command("codex", "full")[-3:], ["codex", "full", "plain"])
+        for role in ("setup-codex", "setup-claude", "pi", "evren", "evren-cli"):
+            with self.assertRaises(ValueError):
+                command(role, "full")
+        with tempfile.TemporaryDirectory() as temp:
+            stub = Path(temp) / "agent"
+            stub.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+            stub.chmod(0o700)
+            for agent, flag in (("codex", "--dangerously-bypass-approvals-and-sandbox"),
+                                ("claude", "--dangerously-skip-permissions")):
+                args = [launcher, "--pane", agent]
+                optional = subprocess.run(args+["full", stub, "plain"], text=True,
+                                          input="", capture_output=True, timeout=5)
+                self.assertEqual(optional.returncode, 0)
+                self.assertIn(flag, optional.stdout)
+                normal = subprocess.run(args+["normal", stub, "plain"], text=True,
+                                        input="", capture_output=True, timeout=5)
+                self.assertEqual(normal.returncode, 0)
+                self.assertNotIn(flag, normal.stdout)
+                rejected = subprocess.run(args+["full", stub, "setup", "pi"], text=True,
+                                          input="", capture_output=True, timeout=5)
+                self.assertEqual(rejected.returncode, 2)
+                self.assertEqual(rejected.stdout, "")
+
+    def test_full_permission_target_cannot_be_normal_or_unowned(self):
+        resolve = APP["resolve_session"]
+        normal = ("/test/tmux", "$3")
+        full = ("/test/tmux", "$9")
+        candidates = {"aa-codex": normal, "aa-codex-tam": full}
+        marks = {(normal, "normal"), (full, "full")}
+        with patch.dict(resolve.__globals__, tmux_candidates=lambda: candidates,
+                        trusted_session=lambda name,target,mode="normal": (target,mode) in marks):
+            self.assertEqual(resolve("codex"), ("trusted", "aa-codex", normal))
+            self.assertEqual(resolve("codex", "full"), ("trusted", "aa-codex-tam", full))
+            candidates.pop("aa-codex")
+            self.assertEqual(resolve("codex"), ("absent", "aa-codex", None))
+            marks.discard((full,"full"))
+            self.assertEqual(resolve("codex","full"), ("blocked", "aa-codex-tam", None))
+
     def test_evren_starts_the_credential_isolating_wrapper(self):
         args = APP["session_command"]("evren")
         self.assertEqual(Path(args[-1]).name, "evren-dsh-terminal")

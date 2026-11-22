@@ -147,6 +147,7 @@ def tmux_role(role):
 
 
 ATOLYE_TMUX_NAMES = ("aa-codex", "aa-claude", "aa-pi", "aa-evren-cli", "aa-codex-atolye", "aa-claude-atolye")
+TMUX_FULL = {"codex": "aa-codex-tam", "claude": "aa-claude-tam"}
 TMUX_ALTERNATES = {"codex": "aa-codex-atolye", "claude": "aa-claude-atolye"}
 PUBLIC_TMUX_OWNER = "ajan-atolyesi-public-v1"
 
@@ -164,17 +165,17 @@ def tmux_candidates():
     if result.returncode == 0:
         for line in result.stdout.splitlines():
             name, _, session_id = line.partition(" ")
-            if name in ATOLYE_TMUX_NAMES and re.fullmatch(r"\$[0-9]+", session_id):
+            if (name in ATOLYE_TMUX_NAMES or name in TMUX_FULL.values()) and re.fullmatch(r"\$[0-9]+", session_id):
                 sessions[name] = (tmux, session_id)
     return sessions
 
 
-def trusted_session(name, target):
+def trusted_session(name, target, mode="normal"):
     if name == "aa-evren-cli":
         return True  # The separate EVREN launcher has no unsafe mode.
     binary, session_id = target
     for variable, expected in (("AA_ATOLYE_OWNER", PUBLIC_TMUX_OWNER),
-                               ("AA_SETUP_MODE", "normal")):
+                               ("AA_SETUP_MODE", mode)):
         try:
             result = subprocess.run([binary, "show-environment", "-t", session_id, variable],
                                     capture_output=True, text=True, timeout=0.8)
@@ -190,7 +191,15 @@ def atolye_sessions():
             if trusted_session(name, target)}
 
 
-def resolve_session(agent):
+def resolve_session(agent, mode="normal"):
+    if mode == "full":
+        name = TMUX_FULL.get(agent)
+        if not name:
+            return "absent", "", None
+        target = tmux_candidates().get(name)
+        if target is None:
+            return "absent", name, None
+        return ("trusted", name, target) if trusted_session(name, target, "full") else ("blocked", name, None)
     name = f"aa-{agent}"
     if name not in ATOLYE_TMUX_NAMES or name in TMUX_ALTERNATES.values():
         return "absent", name, None
@@ -260,8 +269,10 @@ def session_pane_path(target):
 
 
 def session_command(role, mode="normal", setup_selection=None, session_id=None):
-    if mode not in ("normal", "existing"):
+    if mode not in ("normal", "existing", "full"):
         raise ValueError("Geçersiz izin modu")
+    if mode == "full" and role not in ("claude", "codex"):
+        raise ValueError("Tam yetki yalnız normal ajan satırından açılabilir")
     setup = role in ("setup-claude", "setup-codex") and mode != "existing"
     if (setup and setup_selection not in ("pi", "evren", "both")) or (not setup and setup_selection is not None):
         raise ValueError("Doğrulama için en az bir araç seç")
@@ -659,6 +670,10 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
     right.add_named(evren_setup, "evren-setup")
     pages = {}
     running = set()
+    session_modes = {}
+
+    def row_session(role):
+        return resolve_session(tmux_role(role), session_modes.get(role, "normal"))
     dots = {}
     timers = {}
     controls = []
@@ -666,7 +681,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
     selected_role = None
 
     def show_session_folder(role):
-        target = named_session(tmux_role(role)) if role else None
+        target = row_session(role)[2] if role else None
         path = session_pane_path(target)
         if path is None:
             active_folder.hide()
@@ -791,6 +806,36 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
         dialog.destroy()
         return ("normal", selection) if response == Gtk.ResponseType.OK and selection else (None, None)
 
+    def choose_work_mode():
+        dialog = Gtk.MessageDialog(transient_for=win, modal=True,
+                                   message_type=Gtk.MessageType.QUESTION,
+                                   text="Yeni oturumun izinleri")
+        dialog.format_secondary_text("Normal mod, ajanın izin kontrollerini korur.")
+        dialog.add_button("Vazgeç", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Tam yetki…", Gtk.ResponseType.APPLY)
+        dialog.add_button("Normal aç", Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.OK)
+        response = dialog.run()
+        dialog.destroy()
+        if response == Gtk.ResponseType.OK:
+            return "normal"
+        if response != Gtk.ResponseType.APPLY:
+            return None
+        caution = Gtk.MessageDialog(transient_for=win, modal=True,
+                                    message_type=Gtk.MessageType.WARNING,
+                                    text="Bu oturumu tam yetkiyle açmak istiyor musun?")
+        caution.format_secondary_text(
+            "Ajanın izin onayları atlanır; Codex ayrıca kendi sandbox’ını kapatır. "
+            "Ajan, hesabının erişebildiği dosyalara ve komutlara erişebilir. "
+            "Yalnız dışarıdan yalıtılmış, güvendiğin bir ortamda kullan. "
+            "Seçim kaydedilmez ve teyit oturumlarını etkilemez.")
+        caution.add_button("Vazgeç", Gtk.ResponseType.CANCEL)
+        caution.add_button("Riski anladım; Tam yetki", Gtk.ResponseType.OK)
+        caution.set_default_response(Gtk.ResponseType.CANCEL)
+        approved = caution.run() == Gtk.ResponseType.OK
+        caution.destroy()
+        return "full" if approved else None
+
     def confirm_pi_folder(folder):
         dialog = Gtk.MessageDialog(
             transient_for=win, modal=True, message_type=Gtk.MessageType.WARNING,
@@ -857,7 +902,9 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
             select_button(button)
             right.set_visible_child(pages[role])
             status.set_text("Açık oturuma dönüldü. Doğrulama otomatik gönderilmedi; README’den kopyalayabilirsin."
-                            if role.startswith("setup-") else button.get_label())
+                            if role.startswith("setup-") else
+                            f"Tam yetki · {TMUX_FULL[role]}" if session_modes.get(role) == "full"
+                            else button.get_label())
             pages[role].get_child().grab_focus()
             return
         if role in ("evren", "evren-cli") and not smoke_terminal:
@@ -913,6 +960,16 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
             choose_setup_mode(setup=setup) if agent else ("normal", None))
         if mode is None:
             return
+        if agent and not setup and not existing:
+            mode = choose_work_mode()
+            if mode is None:
+                return
+            if mode == "full":
+                full_state, selected_name, _ = resolve_session(agent, "full")
+                if full_state == "blocked":
+                    status.set_text(f"{selected_name} başka bir oturuma ait. Bu oturum değiştirilmedi.")
+                    return
+        session_modes[role] = "full" if mode == "full" else "normal"
         if role in pages:
             right.remove(pages.pop(role))
         terminal = Vte.Terminal()
@@ -930,7 +987,9 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
         status.set_text("Açık oturuma dönülüyor. Doğrulama otomatik gönderilmedi; README’den kopyalayabilirsin."
                         if existing and role.startswith("setup-")
                         else label)
-        if attachment == "alternate":
+        if mode == "full":
+            status.set_text(f"Tam yetki · {selected_name}")
+        elif attachment == "alternate":
             status.set_text(f"Asıl ad başka bir oturuma ait. Dokunulmadı; Atölye hedefi: {selected_name}.")
         elif existing and selected_name in TMUX_ALTERNATES.values():
             status.set_text(f"Atölye oturumuna dönülüyor: {selected_name}. Doğrulama otomatik gönderilmedi.")
@@ -958,7 +1017,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
 
     def close_session(_button, role, label):
         agent = tmux_role(role)
-        _, resolved_name, target = resolve_session(agent)
+        _, resolved_name, target = row_session(role)
         if role not in running and not target:
             status.set_text("Kapatılacak açık oturum yok.")
             if role in pages:
@@ -977,7 +1036,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
         if response != Gtk.ResponseType.OK:
             return
         if target:
-            if resolve_session(agent)[1:] != (resolved_name, target):
+            if row_session(role)[1:] != (resolved_name, target):
                 status.set_text("Oturum değişti. Hiçbir oturum kapatılmadı.")
                 return
             try:
@@ -989,7 +1048,9 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
             if result.returncode:
                 status.set_text("tmux oturumu kapatılamadı.")
                 return
-        roles = [item for _, item in OPTIONS if tmux_role(item) == agent] if target else [role]
+        permission = session_modes.get(role, "normal")
+        roles = ([item for _, item in OPTIONS if tmux_role(item) == agent
+                  and session_modes.get(item, "normal") == permission] if target else [role])
         for item in roles:
             page = pages.pop(item, None)
             process_closed(item)
@@ -1113,7 +1174,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
 
     def copy_session_identity(_item, role):
         agent = tmux_role(role)
-        _, identity, target = resolve_session(agent)
+        _, identity, target = row_session(role)
         if not target:
             status.set_text("Oturum kapalı. Önce oturumu aç.")
             return
@@ -1133,7 +1194,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
         menu.append(item)
         agent = tmux_role(role)
         copy = Gtk.MenuItem(label="Oturum kimliğini kopyala")
-        target = named_session(agent)
+        target = row_session(role)[2]
         copy.set_sensitive(bool(target))
         if target:
             path = session_pane_path(target)
