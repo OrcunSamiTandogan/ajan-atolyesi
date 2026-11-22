@@ -11,10 +11,10 @@ render_setup_prompt() {
   fi
   printf '\nKullanıcının seçimi kesin; tekrar seçim sorma. Yalnız aşağıdaki maddeleri uygula.\n'
   if [[ "$selection" == pi || "$selection" == both ]]; then
-    printf '%s\n' '- Pi + NVIDIA: Node.js 22.19+ ve npm. Pi sürümü ve kurulum için https://docs.pi.dev/latest/quickstart. Sonraki adım: NVIDIA anahtarı → Kaydet → Pi · NVIDIA.'
+    printf '%s\n' '- Pi + NVIDIA: Node.js 22.19+, npm ve tmux. Pi sürümü ve kurulum için https://docs.pi.dev/latest/quickstart. Sonraki adım: NVIDIA anahtarı → Kaydet → proje seç → Pi · NVIDIA. tmux hedefi: aa-pi.'
   fi
   if [[ "$selection" == evren || "$selection" == both ]]; then
-    printf '%s\n' '- EVREN + DeepSeek: Node.js 24.9+ ve npm. DSH CLI için tmux. dsh sürümü ve kurulum için https://github.com/deepseek-ai/deepseek-harness/tree/master/apps/cli. Sonraki adım: EVREN anahtarı → Kaydet → EVREN · DSH CLI veya EVREN · DSH Web.'
+    printf '%s\n' '- EVREN + DeepSeek: Node.js 24.9+ ve npm. DSH CLI için tmux. dsh sürümü ve kurulum için https://github.com/deepseek-ai/deepseek-harness/tree/master/apps/cli. Sonraki adım: EVREN anahtarı → Kaydet → EVREN · DSH CLI veya EVREN · DSH Web. CLI tmux hedefi: aa-evren-cli.'
   fi
 }
 if [[ ${1:-} == --print-setup-prompt ]]; then

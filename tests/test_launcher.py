@@ -1,4 +1,6 @@
 import os
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 import runpy
 import subprocess
@@ -48,6 +50,27 @@ class LauncherTests(unittest.TestCase):
         args = APP["session_command"]("evren")
         self.assertEqual(Path(args[-1]).name, "evren-dsh-terminal")
         self.assertNotIn("EVREN_API_KEY", " ".join(args))
+
+    def test_new_pi_launch_does_not_attach_to_a_concurrently_created_session(self):
+        pi_tmux = APP["pi_tmux"]
+        with patch.dict(pi_tmux.__globals__, session_attachment=lambda _: ("trusted", ("/test/tmux", "$9"))), \
+                patch("shutil.which", return_value="/test/tmux"), patch("subprocess.run") as run, \
+                patch("os.execve") as execute, redirect_stderr(StringIO()):
+            self.assertEqual(pi_tmux(), 1)
+        run.assert_not_called()
+        execute.assert_not_called()
+
+    def test_pi_without_saved_key_drops_inherited_provider_keys(self):
+        pi_terminal = APP["pi_terminal"]
+        with patch.dict(pi_terminal.__globals__, pi_binary=lambda: "/test/pi", saved_key=lambda: None), \
+                patch.dict(os.environ, {"NVIDIA_API_KEY": MOCK, "EVREN_API_KEY": "fake-evren"}), \
+                patch("os.execve") as execute:
+            pi_terminal()
+        execute.assert_called_once()
+        binary, args, env = execute.call_args.args
+        self.assertEqual((binary, args), ("/test/pi", ["/test/pi"]))
+        self.assertNotIn("NVIDIA_API_KEY", env)
+        self.assertNotIn("EVREN_API_KEY", env)
 
     def test_save_key_read_mode_and_command_has_no_secret(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, XDG_CONFIG_HOME=tmp):

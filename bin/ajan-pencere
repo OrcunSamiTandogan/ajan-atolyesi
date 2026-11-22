@@ -143,10 +143,10 @@ def agent_for(role):
 
 
 def tmux_role(role):
-    return "evren-cli" if role == "evren-cli" else agent_for(role)
+    return role if role in ("pi", "evren-cli") else agent_for(role)
 
 
-ATOLYE_TMUX_NAMES = ("aa-codex", "aa-claude", "aa-evren-cli")
+ATOLYE_TMUX_NAMES = ("aa-codex", "aa-claude", "aa-pi", "aa-evren-cli")
 PUBLIC_TMUX_OWNER = "ajan-atolyesi-public-v1"
 
 
@@ -216,8 +216,8 @@ def session_reminder(sessions):
     return (
         "Ajan Atölyesi oturum hatırlatıcısı\n\n"
         f"Hatırlatıcı açıldığında görülen tmux hedefleri: {live or 'doğrulanmış açık hedef yok'}.\n"
-        "Olası hedefler: aa-codex (Codex), aa-claude (Claude), aa-evren-cli (EVREN DSH CLI). "
-        "Pi, DSH Web ve normal Terminal bu uygulamada birer tmux hedefi değildir.\n\n"
+        "Olası hedefler: aa-codex (Codex), aa-claude (Claude), aa-pi (Pi · NVIDIA), "
+        "aa-evren-cli (EVREN DSH CLI). DSH Web ve normal Terminal birer tmux hedefi değildir.\n\n"
         "Yalnız kullanıcı başka oturuma mesaj göndermeni istediğinde gönder. "
         "Önce normal tmux sunucusunda tam adı ve açık paneli yeniden kontrol et. "
         "Seçili proje klasörü ile açık panelin klasörü aynı olmayabilir; gerekiyorsa ikisini de doğrula. "
@@ -250,11 +250,16 @@ def session_command(role, mode="normal", setup_selection=None, session_id=None):
     setup = role in ("setup-claude", "setup-codex") and mode != "existing"
     if (setup and setup_selection not in ("pi", "evren", "both")) or (not setup and setup_selection is not None):
         raise ValueError("Kurulum için en az bir sağlayıcı seç")
-    if session_id is not None and (mode != "existing" or not agent_for(role)
+    if session_id is not None and (mode != "existing" or not (agent_for(role) or role == "pi")
                                    or not re.fullmatch(r"\$[0-9]+", session_id)):
         raise ValueError("Geçersiz oturum kimliği")
     if role == "evren-cli" and mode in ("normal", "existing"):
         return [str(ROOT / "bin/ajan-dsh-pane")]
+    if role == "pi":
+        if mode == "existing" and session_id is None:
+            raise ValueError("Pi tmux oturum kimliği gerekli")
+        return [sys.executable, str(Path(__file__).resolve()), "--pi-tmux"] + (
+            [session_id] if session_id else [])
     agent = agent_for(role)
     if agent:
         return [str(ROOT / "bin/ajan-kur"), agent, mode,
@@ -262,8 +267,6 @@ def session_command(role, mode="normal", setup_selection=None, session_id=None):
                     [setup_selection] if setup else [session_id] if session_id else [])
     if mode != "normal":
         raise ValueError("Bu oturum izin modunu değiştiremez")
-    if role == "pi":
-        return [sys.executable, str(Path(__file__).resolve()), "--pi-terminal"]
     if role == "evren":
         return [sys.executable, str(ROOT / "bin/evren-dsh-terminal")]
     if role == "terminal":
@@ -377,31 +380,64 @@ def dsh_install_command():
     return npm_install_command(dsh_prefix(), DSH_PACKAGE, (24, 9, 0))
 
 
+def pi_tmux(expected_id=None):
+    tmux = shutil.which("tmux")
+    if not tmux:
+        print("Pi · NVIDIA için önce tmux kur.", file=sys.stderr)
+        return 1
+    # Only the Pi process inside the pane reads its saved provider key.
+    keep = ("HOME", "USER", "LOGNAME", "PATH", "SHELL", "TERM", "COLORTERM",
+            "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP",
+            "TMUX", "TMUX_TMPDIR", "XDG_CONFIG_HOME")
+    env = {name: os.environ[name] for name in keep if name in os.environ}
+    attachment, target = session_attachment("pi")
+    if expected_id is None:
+        if attachment != "absent":
+            print("aa-pi bu sırada açıldı. Proje klasörünü kontrol edip tekrar dene.", file=sys.stderr)
+            return 1
+        result = subprocess.run(
+            [tmux, "new-session", "-d", "-E", "-P", "-F", "#{session_id}",
+             "-s", "aa-pi", "-c", os.getcwd(),
+             "-e", f"AA_ATOLYE_OWNER={PUBLIC_TMUX_OWNER}", "-e", "AA_SETUP_MODE=normal",
+             "-e", f"PATH={env.get('PATH', os.defpath)}",
+             "-e", f"XDG_CONFIG_HOME={env.get('XDG_CONFIG_HOME', '')}",
+             sys.executable, str(Path(__file__).resolve()), "--pi-terminal"],
+            env=env, capture_output=True, text=True)
+        if result.returncode == 0:
+            expected_id = result.stdout.strip()
+            attachment, target = session_attachment("pi")
+    if attachment != "trusted" or (expected_id is not None and target[1] != expected_id):
+        print("aa-pi oturumu doğrulanamadı. Pi · NVIDIA’yı tekrar aç.", file=sys.stderr)
+        return 1
+    command = "switch-client" if env.get("TMUX") else "attach-session"
+    os.execve(tmux, [tmux, command, "-E", "-t", target[1]], env)
+
+
 def pi_terminal():
+    # The tmux server can predate this launch and have its own global environment.
+    keep = ("HOME", "USER", "LOGNAME", "PATH", "SHELL", "TERM", "COLORTERM",
+            "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP")
+    env = {name: os.environ[name] for name in keep if name in os.environ}
     binary = pi_binary()
     if not binary:
         args = note_shell("Pi kurulu değil. Kurulum: https://docs.pi.dev/latest/quickstart")
-        os.execv(args[0], args)
+        os.execve(args[0], args, env)
     try:
         key = saved_key()
     except (OSError, ValueError):
         args = note_shell("NVIDIA ayarını okuyamadım. Atölye anahtarları ekranından dosyanın konumuna bak. Kurtarma: " + FAQ_URL)
-        os.execv(args[0], args)
+        os.execve(args[0], args, env)
     if key:
-        # Do not carry unrelated provider tokens or SSH agent sockets into Pi.
-        keep = ("HOME", "USER", "LOGNAME", "PATH", "SHELL", "TERM", "COLORTERM",
-                "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP")
-        env = {name: os.environ[name] for name in keep if name in os.environ}
-        env["NVIDIA_API_KEY"] = key
         directory = config_dir() / "pi"
         try:
             add_nvidia_models(directory)
         except (OSError, ValueError):
             args = note_shell("NVIDIA model ayarları eklenemedi. Mevcut dosya değiştirilmedi.")
-            os.execv(args[0], args)
+            os.execve(args[0], args, env)
+        env["NVIDIA_API_KEY"] = key
         env["PI_CODING_AGENT_DIR"] = str(directory)
         os.execve(binary, [binary, "--models", NVIDIA_SCOPE, "--model", "nvidia/" + MINIMAX_ID, "--thinking", "low", "--no-extensions"], env)
-    os.execv(binary, [binary])
+    os.execve(binary, [binary], env)
 
 
 def session_icons():
@@ -833,6 +869,9 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
             if install_pi_action.get_sensitive():
                 install_detail.set_text("Claude veya Codex gerekmez. Kurulum yalnız bu kullanıcıya yapılır.")
             return
+        if role == "pi" and not shutil.which("tmux"):
+            status.set_text("Pi · NVIDIA için sisteminin paket yöneticisinden tmux kur.")
+            return
         agent = agent_for(role)
         tmux_target = tmux_role(role)
         attachment, identified = session_attachment(tmux_target)
@@ -850,7 +889,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
         if agent and not existing and not shutil.which(agent):
             status.set_text(f"{agent.capitalize()} bulunamadı. İlk kullanım için Pi · NVIDIA’yı seçebilirsin.")
             return
-        if role == "pi" and not smoke_terminal:
+        if role == "pi" and not existing and not smoke_terminal:
             if not confirm_pi_folder(folder):
                 status.set_text("Pi açılmadı.")
                 return
@@ -891,7 +930,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
                 GLib.timeout_add(320, refresh_folder)
         if role == "evren":
             folder = str(Path.home())
-        expected_id = identified[1] if agent and identified else None
+        expected_id = identified[1] if identified and (agent or role == "pi") else None
         command = note_shell("Test terminali") if smoke_terminal and role == "evren" else (
             session_command(role, mode, setup_selection, session_id=expected_id))
         terminal.spawn_async(Vte.PtyFlags.DEFAULT, folder, command, None,
@@ -1184,6 +1223,8 @@ def main():
         return 0
     if sys.argv[1:] == ["--pi-terminal"]:
         return pi_terminal()
+    if sys.argv[1:2] == ["--pi-tmux"] and len(sys.argv) <= 3:
+        return pi_tmux(sys.argv[2] if len(sys.argv) == 3 else None)
     try:
         import gi
         gi.require_version("Gtk", "3.0")

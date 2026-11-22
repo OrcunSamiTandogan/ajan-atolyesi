@@ -27,7 +27,7 @@ jobs:
       - name: Install headless UI dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y python3-gi gir1.2-gtk-3.0 gir1.2-vte-2.91 xvfb xauth desktop-file-utils
+          sudo apt-get install --no-install-recommends -y python3-gi gir1.2-gtk-3.0 gir1.2-vte-2.91 xvfb xauth desktop-file-utils tmux
       - name: Open the embedded terminal
         run: |
           xvfb-run -a ./bin/ajan-pencere --check-ui

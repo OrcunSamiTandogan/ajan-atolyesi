@@ -2,8 +2,11 @@
 Uses fake CLI binaries and fake keys. Does not contact any provider.
 """
 import os
+from contextlib import ExitStack
 from pathlib import Path
 import runpy
+import shutil
+import subprocess
 import tempfile
 
 import gi
@@ -38,7 +41,10 @@ def until(predicate, timeout_us=5_000_000):
 
 
 assert Gtk.init_check()[0]
-with tempfile.TemporaryDirectory() as tmp:
+real_tmux = shutil.which("tmux")
+assert real_tmux, "Pi · NVIDIA grafik testi için tmux gerekli"
+with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir, ExitStack() as cleanup:
+    tmp = str(Path(temp_dir).resolve())
     folder = Path(tmp)
     fake_bin = folder / "bin"
     fake_bin.mkdir()
@@ -153,6 +159,8 @@ esac
         until(receipt.exists)
         contents = receipt.read_text()
         assert chosen in contents and excluded not in contents and "tekrar seçim sorma" in contents
+        target = "aa-pi" if option == 0 else "aa-evren-cli"
+        assert f"tmux hedefi: {target}" in contents and "Oturum kimliğini kopyala" in contents
     fake_setup_tmux.unlink()
 
     # One exact tmux target, with a similarly named sibling as a decoy.
@@ -206,6 +214,14 @@ esac
     assert any(isinstance(w, Gtk.Label) and w.get_visible() and
                w.get_text() == "Açık oturum başka klasörde: proje-a" for w in children(window))
 
+    tmux.unlink()
+    tmux.symlink_to(real_tmux)
+    socket_dir = folder / "socket"
+    socket_dir.mkdir(mode=0o700)
+    os.environ.pop("TMUX", None)
+    os.environ.update(TMUX_TMPDIR=str(socket_dir), SHELL="/bin/sh", TERM="xterm-256color")
+    cleanup.callback(subprocess.run, [real_tmux, "kill-server"], capture_output=True)
+
     pi = button(window, "Pi · NVIDIA")
     pi.clicked()
     assert stack.get_visible_child_name() == "pi-install"
@@ -228,7 +244,7 @@ test -n "$NVIDIA_API_KEY"
 test -z "${EVREN_API_KEY:-}"
 printf 'MOCK_PI_READY\\n'
 printf "%s" "$PWD" > "$HOME/config/mock-pi-ready"
-/bin/sleep 3
+/bin/sleep 10
 PI
 /bin/chmod 700 "$cat_path"
 """)
@@ -257,6 +273,17 @@ PI
     terminal = stack.get_visible_child().get_child()
     until(lambda: terminal.get_pty() is not None and (folder / "config/mock-pi-ready").exists())
     assert (folder / "config/mock-pi-ready").read_text() == tmp
+    target = app["named_session"]("pi")
+    assert target and app["session_pane_path"](target) == tmp
+    assert subprocess.run([real_tmux, "show-environment", "-t", target[1], "NVIDIA_API_KEY"],
+                          capture_output=True).returncode != 0
+    assert pi.emit("popup-menu")
+    menu = Gtk.Menu.get_for_attach_widget(pi)[0]
+    copy = next(w for w in menu.get_children() if w.get_label() == "Oturum kimliğini kopyala")
+    assert copy.get_sensitive()
+    copy.activate()
+    assert Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).wait_for_text() == "aa-pi"
+    menu.destroy()
     button(window, "EVREN · DSH Web").clicked()
     assert stack.get_visible_child_name() == "evren-setup"
     assert button(stack.get_visible_child(), "dsh’yi kur").get_visible()
@@ -296,4 +323,4 @@ PI
     if saved_home:
         os.environ["HOME"] = saved_home
 
-print("GTK: kurulum seçimleri ve gerçek prompt aktarımı → temiz ayar → maskeli anahtarlar → Pi kurulumu → Pi terminali → EVREN kurulum ekranı ve resmî dsh web çağrısı geçti (sahte CLI/anahtar).")
+print("GTK: kurulum promptu, maskeli anahtar ekranları, Pi kurulumu, aa-pi ve pano, EVREN Web doğrulandı (sahte CLI/anahtar).")
