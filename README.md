@@ -72,3 +72,7 @@ Yollar bağımsız. Yalnız EVREN’i kullanacaksan NVIDIA anahtarı, yalnız NV
 ## Lisans
 
 Ajan Atölyesi [MIT lisansıyla](LICENSE) yayımlanır. NVIDIA, EVREN ve diğer dış araçlar kendi lisanslarına ve kullanım koşullarına tabidir.
+
+## Arıza ve geri bildirim
+
+Bir arıza ya da eksik bulursan [issue aç](https://github.com/OrcunSamiTandogan/ajan-atolyesi/issues/new) ya da orcun@tandogan.dev adresine e-posta at. Yazarken sürümünü, işletim sistemini ve ne olduğunu ekle; anahtar, `.env` içeriği veya özel dosya ekleme. Güvenlik açığı bulduysan herkese açık issue yerine [SECURITY.md](SECURITY.md) yolunu kullan.
