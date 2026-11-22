@@ -42,7 +42,7 @@ def until(predicate, timeout_us=5_000_000):
 
 assert Gtk.init_check()[0]
 real_tmux = shutil.which("tmux")
-assert real_tmux, "Pi · NVIDIA grafik testi için tmux gerekli"
+assert real_tmux, "Pi grafik testi için tmux gerekli"
 with tempfile.TemporaryDirectory(dir="/tmp") as temp_dir, ExitStack() as cleanup:
     tmp = str(Path(temp_dir).resolve())
     folder = Path(tmp)
@@ -196,7 +196,7 @@ esac
     reminder.clicked()
     assert "test veya başka sunucudaki" in Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).wait_for_text()
     for name, target in (("Codex oturumu", "aa-codex"), ("Claude oturumu", None),
-                         ("Pi · NVIDIA", None), ("EVREN · DSH CLI", "aa-evren-cli"), ("EVREN · DSH Web", None)):
+                         ("Pi", None), ("DSH CLI", "aa-evren-cli"), ("DSH Web", None)):
         row = button(window, name)
         assert row.emit("popup-menu")
         menu = Gtk.Menu.get_for_attach_widget(row)[0]
@@ -222,7 +222,7 @@ esac
     os.environ.update(TMUX_TMPDIR=str(socket_dir), SHELL="/bin/sh", TERM="xterm-256color")
     cleanup.callback(subprocess.run, [real_tmux, "kill-server"], capture_output=True)
 
-    pi = button(window, "Pi · NVIDIA")
+    pi = button(window, "Pi")
     pi.clicked()
     assert stack.get_visible_child_name() == "pi-install"
     install = button(stack.get_visible_child(), "Pi’yi kur")
@@ -256,7 +256,7 @@ PI
 
     def confirm_pi(response):
         dialog = next(w for w in Gtk.Window.list_toplevels() if isinstance(w, Gtk.Dialog)
-                      and w.get_visible() and w.get_title() == "Pi · NVIDIA güvenilir klasör")
+                      and w.get_visible() and w.get_title() == "Pi güvenilir klasör")
         labels = " ".join(w.get_text() for w in children(dialog) if isinstance(w, Gtk.Label))
         assert "NVIDIA anahtarına erişebilir" in labels and tmp in labels
         assert "nvapi-fake_key_12345" not in labels
@@ -284,7 +284,7 @@ PI
     copy.activate()
     assert Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).wait_for_text() == "aa-pi"
     menu.destroy()
-    button(window, "EVREN · DSH Web").clicked()
+    button(window, "DSH Web").clicked()
     assert stack.get_visible_child_name() == "evren-setup"
     assert button(stack.get_visible_child(), "dsh’yi kur").get_visible()
 
@@ -299,7 +299,7 @@ PI
         "/bin/sleep 2\n"
     )
     fake_dsh.chmod(0o700)
-    button(window, "EVREN · DSH Web").clicked()
+    button(window, "DSH Web").clicked()
     assert stack.get_visible_child_name() == "evren"
     terminal = stack.get_visible_child().get_child()
     until(lambda: terminal.get_pty() is not None and marker.exists())
