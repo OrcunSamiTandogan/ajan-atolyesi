@@ -53,8 +53,8 @@ Hayır. Bu rota NVIDIA'nın sunucularındaki API'yi kullanır. Hesabın, interne
 **Claude veya Codex komutu bulunamadı.**
 Bu araçları Atölye'nin kurulum düğmesi indirmez; düğme kurulu aracı açıp ona kurulum talimatı verir. Önce [Claude Code](https://code.claude.com/docs/en/setup) veya [Codex](https://learn.chatgpt.com/docs/auth) rehberini izle. Linux/macOS'ta normal terminalde `claude --version` veya `codex --version` çalıştır. Windows'ta komutu WSL içindeki Ubuntu terminalinde çalıştır. NVIDIA ile başlamak için bunları kurman gerekmez.
 
-**“Codex ile kur”a bastım ama kurulum başlamadı.**
-Açık `aa-codex` veya `aa-claude` oturumu bu Atölye’nin oluşturduğu normal izinli oturumsa uygulama ona geri bağlanır. Kimliği veya izin modu doğrulanamayan oturumlara bağlanmaz. Ana ad dışarıdan açılmış bir oturuma aitse Atölye kendi `aa-codex-atolye` veya `aa-claude-atolye` oturumunu açar; iki ad da başka oturumlara aitse hiçbirine dokunmaz. Kurulum promptu mevcut oturuma otomatik gönderilmez. Ajan ekranda açıksa [kurulum promptunu](../KURULUM-PROMPTU.md) kendin gönder. Ya da işini kaydet, satırdaki **×** ile oturumu kapat ve tekrar **… ile kur**'a bas.
+**“Codex ile teyit et”e bastım ama kontrol başlamadı.**
+Açık `aa-codex` veya `aa-claude` oturumu bu Atölye’nin oluşturduğu normal izinli oturumsa uygulama ona geri bağlanır. Kimliği veya izin modu doğrulanamayan oturumlara bağlanmaz. Ana ad dışarıdan açılmış bir oturuma aitse Atölye kendi `aa-codex-atolye` veya `aa-claude-atolye` oturumunu açar; iki ad da başka oturumlara aitse hiçbirine dokunmaz. Doğrulama promptu mevcut oturuma otomatik gönderilmez. Ajan ekranda açıksa [doğrulama promptunu](../DOGRULAMA-PROMPTU.md) kendin gönder ve hangi aracı kontrol edeceğini belirt. İlk kurulum için [kurulum seçeneklerini](../BASLA.md) kullan.
 
 **Satırdaki renkler ve × nedir?**
 Koyu nokta terminalin kapalı, yeşil açık, mavi yakın zamanda ekrana çıktı geldiğini söyler. Modelin düşünüp düşünmediğini ölçmez. **×** ilgili oturumu sonlandırır; sadece başka satıra tıklamak onu çalışır bırakır.

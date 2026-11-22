@@ -51,6 +51,29 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(bad.returncode, 2)
         self.assertEqual(bad.stdout, b"")
 
+    def test_verification_is_distinct_and_reports_before_changes(self):
+        launcher = Path(__file__).resolve().parents[1] / "bin/ajan-kur"
+        for choice, pi, dsh in (("pi", True, False), ("evren", False, True), ("both", True, True)):
+            args = [launcher, "--print-verification-prompt", choice]
+            prompt = subprocess.check_output(args, text=True)
+            self.assertIn("Bu bir kurulum isteği değildir.", prompt)
+            self.assertIn("açıkça onay verirse", prompt)
+            self.assertIn("Bileşen | Durum | Kanıt", prompt)
+            self.assertIn("Canlı sağlayıcı/model testi yapma", prompt)
+            self.assertEqual("pi --version" in prompt, pi)
+            self.assertEqual("dsh --version" in prompt, dsh)
+        self.assertIn(("Claude ile teyit et", "setup-claude"), APP["OPTIONS"])
+        self.assertIn(("Codex ile teyit et", "setup-codex"), APP["OPTIONS"])
+        with tempfile.TemporaryDirectory() as temp:
+            stub = Path(temp) / "agent"
+            stub.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+            stub.chmod(0o700)
+            launched = subprocess.run([launcher, "--pane", "codex", "normal", stub, "setup", "pi"],
+                                      text=True, input="", capture_output=True, timeout=5)
+            self.assertEqual(launched.returncode, 0)
+            self.assertIn("Bu bir kurulum isteği değildir.", launched.stdout)
+            self.assertNotIn("NVIDIA anahtarı → Kaydet", launched.stdout)
+
     def test_evren_starts_the_credential_isolating_wrapper(self):
         args = APP["session_command"]("evren")
         self.assertEqual(Path(args[-1]).name, "evren-dsh-terminal")

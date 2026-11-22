@@ -133,9 +133,9 @@ esac
 
     def setup_response(option, response):
         dialog = next(w for w in Gtk.Window.list_toplevels() if isinstance(w, Gtk.Dialog)
-                      and w.get_visible() and w.get_title() == "Kurulum seçenekleri")
+                      and w.get_visible() and w.get_title() == "Teyit seçenekleri")
         choices = [w for w in children(dialog) if isinstance(w, Gtk.CheckButton)]
-        assert [w.get_label() for w in choices] == ["Pi + NVIDIA", "EVREN + DeepSeek (DSH CLI ve Web)"]
+        assert [w.get_label() for w in choices] == ["Pi", "DSH (CLI ve Web)"]
         assert not any(w.get_active() for w in choices)
         normal = dialog.get_widget_for_response(Gtk.ResponseType.OK)
         unsafe = dialog.get_widget_for_response(Gtk.ResponseType.APPLY)
@@ -147,20 +147,20 @@ esac
         return GLib.SOURCE_REMOVE
 
     GLib.idle_add(setup_response, None, Gtk.ResponseType.CANCEL)
-    button(window, "Claude ile kur").clicked()
+    button(window, "Claude ile teyit et").clicked()
     assert not (folder / "claude-setup-prompt").exists()
     for name, agent, option, chosen, excluded in (
-        ("Claude ile kur", "claude", 0, "Pi + NVIDIA", "EVREN"),
-        ("Codex ile kur", "codex", 1, "EVREN + DeepSeek", "NVIDIA"),
+        ("Claude ile teyit et", "claude", 0, "pi --version", "dsh --version"),
+        ("Codex ile teyit et", "codex", 1, "dsh --version", "pi --version"),
     ):
         GLib.idle_add(setup_response, option, Gtk.ResponseType.OK)
         button(window, name).clicked()
         receipt = folder / (agent + "-setup-prompt")
         until(receipt.exists)
         contents = receipt.read_text()
-        assert chosen in contents and excluded not in contents and "tekrar seçim sorma" in contents
+        assert chosen in contents and excluded not in contents and "Bu bir kurulum isteği değildir." in contents
         target = "aa-pi" if option == 0 else "aa-evren-cli"
-        assert f"tmux hedefi: {target}" in contents and "Oturum kimliğini kopyala" in contents
+        assert f"Hedef: {target}" in contents or f"hedefi: {target}" in contents
     fake_setup_tmux.unlink()
 
     # One exact tmux target, with a similarly named sibling as a decoy.

@@ -17,6 +17,22 @@ render_setup_prompt() {
     printf '%s\n' '- DSH (CLI ve Web): Node.js 24.9+ ve npm. DSH CLI için tmux. Kurulu aracı dsh --version ile kontrol et. dsh sürümü ve kurulum için https://github.com/deepseek-ai/deepseek-harness/tree/master/apps/cli. Sonraki adım: EVREN anahtarı → Kaydet → DSH CLI veya DSH Web. CLI tmux hedefi: aa-evren-cli.'
   fi
 }
+render_verify_prompt() {
+  local selection=$1
+  case "$selection" in pi|evren|both|ask) ;; *) return 2 ;; esac
+  cat "$here/../DOGRULAMA-PROMPTU.md" || return
+  if [[ "$selection" == pi || "$selection" == both ]]; then
+    printf '\n- Pi: `node -v` (22.19+), `npm -v`, `tmux -V`, `pi --version`. Hedef: aa-pi.\n'
+  fi
+  if [[ "$selection" == evren || "$selection" == both ]]; then
+    printf '\n- DSH CLI ve DSH Web: `node -v` (24.9+), `npm -v`, `dsh --version`; CLI için `tmux -V`. CLI hedefi: aa-evren-cli.\n'
+  fi
+}
+if [[ ${1:-} == --print-verification-prompt ]]; then
+  [[ $# == 2 ]] || exit 2
+  render_verify_prompt "$2"
+  exit
+fi
 if [[ ${1:-} == --print-setup-prompt ]]; then
   [[ $# == 2 ]] || exit 2
   render_setup_prompt "$2"
@@ -37,7 +53,7 @@ if [[ "$phase" == pane ]]; then
   flags=()
   agent=$3
   case "${4:-setup}" in
-    setup) prompt="$(render_setup_prompt "${5:-ask}")"; flags+=("$prompt") ;;
+    setup) prompt="$(render_verify_prompt "${5:-ask}")"; flags+=("$prompt") ;;
     plain) [[ -z ${5:-} ]] || exit 2 ;;
     *) exit 2 ;;
   esac
@@ -112,6 +128,10 @@ if [[ "$mode" == existing ]]; then
   attach_checked
 fi
 if ! command -v tmux >/dev/null; then
+  if [[ "$kind" == setup ]]; then
+    printf 'Doğrulama oturumu açılamadı: tmux bulunamadı. Kurulum yapılmadı. README’deki sistem rehberini aç.\n' >&2
+    exit 1
+  fi
   if ! command -v apt-get >/dev/null || ! command -v sudo >/dev/null; then
     printf 'Önce sisteminin paket yöneticisinden tmux kurup bu düğmeye yeniden bas.\n'
     hold

@@ -38,7 +38,7 @@ files = ("bin/ajan-pencere", "bin/evren-dsh-terminal", "bin/ajan-dsh",
          "bin/ajan-dsh-pane", "bin/ajan-kur", "bin/ajan-atolyesi", "bin/ajan-surum",
          "bin/evren-baglanti-kontrol", "VERSION", "CHANGELOG.md", "LICENSE", "SECURITY.md",
          "README.md",
-         "BASLA.md", "CONTRIBUTING.md", "KURULUM-PROMPTU.md", "docs/evren-dsh.md",
+         "BASLA.md", "CONTRIBUTING.md", "KURULUM-PROMPTU.md", "DOGRULAMA-PROMPTU.md", "docs/evren-dsh.md",
          "docs/sss.md", "docs/linux.md", "docs/macos.md", "docs/windows.md",
          "docs/manuel-kurulum.md", "docs/kalite.md", "demo/GOREV.md",
          "demo/slug.py", "demo/test_slug.py", "assets/ajan-atolyesi.svg")

@@ -24,7 +24,7 @@ plist="$contents/Info.plist"
 meta="$resources/.ajan-surum-bilgisi"
 exec_files=(bin/ajan-pencere bin/evren-dsh-terminal bin/ajan-dsh bin/ajan-dsh-pane
             bin/ajan-kur bin/ajan-atolyesi bin/ajan-surum bin/evren-baglanti-kontrol)
-data_files=(VERSION CHANGELOG.md LICENSE SECURITY.md README.md BASLA.md CONTRIBUTING.md KURULUM-PROMPTU.md
+data_files=(VERSION CHANGELOG.md LICENSE SECURITY.md README.md BASLA.md CONTRIBUTING.md KURULUM-PROMPTU.md DOGRULAMA-PROMPTU.md
             docs/{evren-dsh,sss,linux,macos,windows,manuel-kurulum,kalite}.md
             assets/ajan-atolyesi.svg demo/GOREV.md demo/slug.py demo/test_slug.py)
 

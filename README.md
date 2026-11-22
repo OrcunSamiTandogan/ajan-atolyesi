@@ -10,6 +10,8 @@ Tek pencereden Pi, Codex ve Claude terminalini aç. **Sadece NVIDIA anahtarın v
 
 Birine tıkla, açılan promptu kopyala ve kendi Claude Code veya Codex terminaline yapıştır. Seçimin prompta yazılı; tekrar seçim yapman gerekmez. Bu araçlar yoksa [manuel kurulum](docs/manuel-kurulum.md) yolunu kullan.
 
+**Atölye zaten kurulu mu?** İlk kurulum promptlarını tekrar çalıştırma. Uygulamada **Claude ile teyit et** veya **Codex ile teyit et** ile eksikleri kontrol et.
+
 ## Sürüm ve değişiklikler
 
 [Sürüm numarası](VERSION) ile [değişiklik günlüğü](CHANGELOG.md) ayrı; **Ajan Atölyesi hakkında** penceresinden veya terminalde `bash bin/ajan-surum` ile bu kopyayı kontrol et. `0.1.0` ilk kararlı 1.0’dan önceki geliştirme çizgisidir. Bir GitHub Release yayımlandığı anlamına gelmez.
@@ -66,7 +68,7 @@ Pi ve DSH farklı araçlardır. Bu kurulumda Pi NVIDIA’yı, DSH ise EVREN’i 
 | Düğme | Ne yapar? |
 |---|---|
 | **Codex oturumu / Claude oturumu** | İlgili komut ayrı kurulmuşsa terminali açar veya `aa-codex` / `aa-claude` oturumuna döner. Bu ad dışarıdan açılmış bir oturuma aitse ona dokunmaz; kendi `aa-codex-atolye` veya `aa-claude-atolye` oturumunu açar. Sonraki tıklamada doğrulanmış Atölye oturumuna döner. Yeni oturum normal izinlerle açılır. Hesap geliştirici aracında açılır, Atölye'ye Claude/Codex anahtarı girmen gerekmez. |
-| **Codex ile kur / Claude ile kur** | Yeni oturumdan önce **Pi**, **DSH** veya ikisini işaretle. Kurulum promptu yalnız seçtiğin araçları içerir. Yalnız Atölye’nin tanıdığı normal oturumlara dönülür. Mevcut oturuma kurulum promptu otomatik gönderilmez. |
+| **Claude ile teyit et / Codex ile teyit et** | Atölye kuruluysa **Pi**, **DSH** veya ikisini seç. Ajan önce kontrol eder ve kanıtlı rapor verir. Değişiklik ancak sana bildirdiği somut adımı ayrıca onaylarsan yapılır. Açık oturuma otomatik mesaj gönderilmez; [doğrulama promptunu](DOGRULAMA-PROMPTU.md) oraya elle yapıştırabilirsin. |
 | **DSH CLI** | Resmî **DeepSeek Harness SDK** sürecini `aa-evren-cli` tmux oturumunda açar. Tarayıcı açmaz. **DSH >** satırına mesaj yaz; yanıtın altında bildirilen cache ve token sayaçlarını gör. |
 | **DSH Web** | Tarayıcıda **resmî DeepSeek Harness** açar. İki yol da aynı dsh kurulumunu ve EVREN’de DeepSeek V4.1 Flash modelini kullanır. [Adımlar](docs/evren-dsh.md) |
 | **Terminal** | Uygulama içinde normal kabuk açar. Seçili proje klasöründe, seçim yoksa ev dizininde başlar. Ajan veya tarayıcı açmaz. |

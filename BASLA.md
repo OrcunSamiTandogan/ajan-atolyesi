@@ -54,6 +54,6 @@ Ajan Atölyesi’ni kur veya mevcut kurulumu doğrula. Kesin seçimim: yalnız D
 4. Uygulama açılışı, araç sürümü ve gerçek model yanıtı ayrı doğrulamalardır. DSH CLI için `aa-evren-cli` tmux hedefini ve sağ tık → Oturum kimliğini kopyala çıktısını anahtarsız testle ayrı doğrula. DSH Web için tmux hedefi bekleme. Testi yapamazsan doğrulanmadığını söyle ve anahtarımı kaydettikten sonra kontrol sırasını göster. Kurulumda canlı model çağrısı yapma. İlk mesajı ben gönderirim: “Sadece MERHABA yaz.” Başka projelere, açık tmux oturumlarına, izin atlama moduna, Git push’a, yayın ve ödeme ayarlarına dokunma. “Ajan Atölyesi · Kurulum raporu” başlığıyla Türkçe tablo ver: Bileşen | Durum | Kanıt. Yalnız seçtiğim araçları ve gereken önkoşulları listele. Durumlar: Zaten hazır, Kuruldu, Düzeltme gerekiyor, Doğrulanmadı. Kanıta gördüğün sürümü veya kısa hata nedenini yaz; canlı model yanıtı Denenmedi. Son satır: Şimdi: basacağım düğme veya düzeltme adımı. Anahtar, .env içeriği veya ham log paylaşma.
 ```
 
-**Atölye zaten kuruluysa:** **Claude ile kur** veya **Codex ile kur** içinde Pi’yi, DSH’yi veya ikisini işaretleyebilirsin. Yeni oturuma yalnız seçtiğin yollar gönderilir; açık oturuma otomatik tekrar gönderilmez.
+**Atölye zaten kuruluysa:** **Claude ile teyit et** veya **Codex ile teyit et** ile Pi’yi, DSH’yi ya da ikisini seç. Önce kontrol ve rapor; onayın olmadan değişiklik yok. Açık oturuma [doğrulama promptunu](DOGRULAMA-PROMPTU.md) kendin gönderebilirsin.
 
 [Uygulamasız manuel kurulum](docs/manuel-kurulum.md) · [İlk oturumu aç](README.md#ilk-oturum)

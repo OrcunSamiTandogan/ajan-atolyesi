@@ -12,8 +12,8 @@ import tempfile
 
 
 OPTIONS = (
-    ("Claude ile kur", "setup-claude"),
-    ("Codex ile kur", "setup-codex"),
+    ("Claude ile teyit et", "setup-claude"),
+    ("Codex ile teyit et", "setup-codex"),
     ("Codex oturumu", "codex"),
     ("Claude oturumu", "claude"),
     ("Pi", "pi"),
@@ -264,7 +264,7 @@ def session_command(role, mode="normal", setup_selection=None, session_id=None):
         raise ValueError("Geçersiz izin modu")
     setup = role in ("setup-claude", "setup-codex") and mode != "existing"
     if (setup and setup_selection not in ("pi", "evren", "both")) or (not setup and setup_selection is not None):
-        raise ValueError("Kurulum için en az bir sağlayıcı seç")
+        raise ValueError("Doğrulama için en az bir araç seç")
     if session_id is not None and (mode != "existing" or not (agent_for(role) or role == "pi")
                                    or not re.fullmatch(r"\$[0-9]+", session_id)):
         raise ValueError("Geçersiz oturum kimliği")
@@ -762,13 +762,13 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
             return "normal", None
         dialog = Gtk.MessageDialog(
             transient_for=win, modal=True, message_type=Gtk.MessageType.QUESTION,
-            text="Neyi kurmak istiyorsun?")
-        dialog.set_title("Kurulum seçenekleri")
+            text="Hangi araçların kurulu olduğunu teyit etmek istiyorsun?")
+        dialog.set_title("Teyit seçenekleri")
         dialog.format_secondary_text(
             "Ajanın normal izin kontrolleri açık kalır. Yalnızca işaretlediğin araçlar "
-            "kurulum isteğine eklenir.")
+            "doğrulanır. Önce rapor verilir; onayın olmadan değişiklik yapılmaz.")
         dialog.add_button("Vazgeç", Gtk.ResponseType.CANCEL)
-        dialog.add_button("Normal aç", Gtk.ResponseType.OK)
+        dialog.add_button("Teyit et", Gtk.ResponseType.OK)
         dialog.set_default_response(Gtk.ResponseType.CANCEL)
         group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         group.set_margin_top(12)
@@ -856,7 +856,7 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
         if role in pages and role in running:
             select_button(button)
             right.set_visible_child(pages[role])
-            status.set_text("Açık oturuma dönüldü; kurulum yeniden gönderilmedi."
+            status.set_text("Açık oturuma dönüldü. Doğrulama otomatik gönderilmedi; README’den kopyalayabilirsin."
                             if role.startswith("setup-") else button.get_label())
             pages[role].get_child().grab_focus()
             return
@@ -927,13 +927,13 @@ def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
         terminal.grab_focus()
         running.add(role)
         label = button.get_label()
-        status.set_text("Açık oturuma bağlanılıyor; kurulum gönderilmeyecek."
+        status.set_text("Açık oturuma dönülüyor. Doğrulama otomatik gönderilmedi; README’den kopyalayabilirsin."
                         if existing and role.startswith("setup-")
                         else label)
         if attachment == "alternate":
             status.set_text(f"Asıl ad başka bir oturuma ait. Dokunulmadı; Atölye hedefi: {selected_name}.")
         elif existing and selected_name in TMUX_ALTERNATES.values():
-            status.set_text(f"Atölye oturumuna bağlanılıyor: {selected_name}. Kurulum yeniden gönderilmeyecek.")
+            status.set_text(f"Atölye oturumuna dönülüyor: {selected_name}. Doğrulama otomatik gönderilmedi.")
         terminal.connect("child-exited", lambda *_: process_closed(role))
         terminal.connect("contents-changed", terminal_activity, role)
         terminal_activity(terminal, role)

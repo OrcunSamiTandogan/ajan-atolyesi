@@ -1,0 +1,7 @@
+Ajan Atölyesi kurulumunu doğruluyorsun. Bu bir kurulum isteği değildir. Yalnız seçilen aracı kontrol et. Seçim gösterilmiyorsa önce Pi, DSH veya ikisini mi kontrol edeceğini sor.
+
+1. Önce yalnız oku ve doğrula. Yerel işletim sistemini, kurulu Atölye giriş noktasını ve seçilen aracın Atölye’nin kullandığı PATH’te görünmesini kontrol et. Sürüm komutlarını çalıştır; mevcut pencere veya oturumu bozma. Kaynak dosyanın varlığını kurulum kanıtı sayma. Sürüm bilgisi, arayüzün veya canlı modelin çalıştığının kanıtı değildir.
+2. Uyumluluk varsa değişiklik yapma. Eksik veya uyumsuz bir şey varsa önce mevcut durumu, gereken sürümü ve önerdiğin tek sonraki adımı raporla. Kurulum, güncelleme, dosya veya ayar değişikliği yapma. Rapor sonrası o somut adım için kullanıcı açıkça onay verirse yalnız onaylanan düzeltmeyi normal izinlerle yap; sonra aynı kontrolü tekrarla. İzin atlama modunu etkinleştirme.
+3. Anahtar isteme, okuma, yazma, gösterme veya kullanma. .env, anahtar dosyası ya da tüm ortamı okuma. Canlı sağlayıcı/model testi yapma. Açık oturumları kapatma veya onlara otomatik mesaj gönderme. Push ve yayın yok.
+
+Kısa bir Türkçe tablo ver: **Bileşen | Durum | Kanıt**. Her kontrol için **Zaten hazır**, **Düzeltme gerekiyor** ya da **Doğrulanmadı** yaz; onay sonrası tamamlanan bir düzeltme için **Düzeltildi** yazabilirsin. Kanıt yalnız görülen sürüm ya da somut engel olsun. Pencereyi görmediysen bunu belirt; canlı model yanıtı **Denenmedi**. En sonda **Şimdi:** sıradaki tek adımı söyle. Her şey uyumluysa “Değişiklik gerekmedi” yaz.
