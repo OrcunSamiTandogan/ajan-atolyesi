@@ -1,0 +1,1234 @@
+#!/usr/bin/python3
+"""Ajan Atölyesi: local GTK/VTE window, no model calls of its own."""
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+
+
+OPTIONS = (
+    ("Claude ile kur", "setup-claude"),
+    ("Codex ile kur", "setup-codex"),
+    ("Codex oturumu", "codex"),
+    ("Claude oturumu", "claude"),
+    ("Pi · NVIDIA", "pi"),
+    ("EVREN · DSH CLI", "evren-cli"),
+    ("EVREN · DSH Web", "evren"),
+    ("Terminal", "terminal"),
+)
+ICONS = (
+    ("Terminal", "utilities-terminal-symbolic"),
+    ("Kurulum", "system-run-symbolic"),
+    ("Yıldız", "emblem-favorite-symbolic"),
+    ("Kod", "applications-development-symbolic"),
+    ("Kalkan", "security-high-symbolic"),
+    ("Oynat", "media-playback-start-symbolic"),
+    ("Güneş", "weather-clear-symbolic"),
+    ("Ağ", "network-workgroup-symbolic"),
+    ("Nokta", "media-record-symbolic"),
+)
+STATES = {
+    "closed": ("#343943", "Kapalı"),
+    "ready": ("#36a86b", "Terminal açık"),
+    "active": ("#3987f7", "Terminal etkinliği"),
+}
+ROOT = Path(__file__).resolve().parents[1]
+NVIDIA_URL = "https://integrate.api.nvidia.com/v1"
+KIMI_ID = "moonshotai/kimi-k3.1-pro"
+MINIMAX_ID = "minimaxai/minimax-m3.1-flash"
+NVIDIA_SCOPE = ",".join("nvidia/" + model for model in (
+    MINIMAX_ID, KIMI_ID, "nvidia/nemotron-3.5-lightning-30b-a3b"))
+DSH_PACKAGE = "@deepseek-ai/dsh@0.2.2-rc.5"
+DSH_GUIDE = "https://github.com/deepseek-ai/deepseek-harness/tree/master/apps/cli"
+PI_PACKAGE = "@earendil-works/pi-coding-agent@1.6.0"
+PI_GUIDE = "https://docs.pi.dev/latest/quickstart"
+REPO_URL = "https://github.com/OrcunSamiTandogan/ajan-atolyesi"
+FAQ_URL = REPO_URL + "/blob/master/docs/sss.md"
+ABOUT_TEXT = ("Codex, Claude Code, Pi + NVIDIA ve EVREN + DeepSeek Harness oturumları için "
+              "yerel masaüstü başlatıcısı.\n\n"
+              "DSH CLI ve DSH Web ayrı açılır. Ayrıca bağımsız bir Terminal vardır.")
+KEY = re.compile(r"nvapi-[A-Za-z0-9_.-]{8,500}")
+
+
+def source_version():
+    try:
+        return subprocess.check_output(
+            ["bash", str(ROOT / "bin/ajan-surum"), "--display"], text=True, timeout=4
+        ).strip()
+    except (OSError, subprocess.SubprocessError):
+        return "Sürüm/derleme bilinmiyor"
+
+
+def config_dir():
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "ajan-atolyesi"
+
+
+PROVIDERS = {
+    "NVIDIA_API_KEY": ("NVIDIA", KEY),
+    "EVREN_API_KEY": ("EVREN", re.compile(r"[!-~]{8,512}")),
+}
+
+
+def read_keys():
+    try:
+        fd = os.open(config_dir() / ".env", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return {}
+    with os.fdopen(fd, "r", encoding="ascii") as handle:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600:
+            raise OSError(".env yalnızca sahibi tarafından okunabilir olmalı (0600).")
+        content = handle.read(2049)
+        if len(content) > 2048:
+            raise ValueError("Uygulamanın .env dosyası beklenen biçimde değil.")
+        result = {}
+        for line in content.splitlines():
+            variable, sep, key = line.partition("=")
+            if (not sep or variable in result or variable not in PROVIDERS
+                    or not PROVIDERS[variable][1].fullmatch(key)):
+                raise ValueError("Uygulamanın .env dosyası beklenen biçimde değil.")
+            result[variable] = key
+        return result
+
+
+def save_key(key, variable="NVIDIA_API_KEY"):
+    name, pattern = PROVIDERS[variable]
+    if not pattern.fullmatch(key):
+        raise ValueError(f"Geçerli bir {name} anahtarı gir.")
+    directory = config_dir()
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    st = directory.lstat()
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+        raise OSError("Güvenli ayar dizini gerekli.")
+    values = read_keys()
+    values[variable] = key
+    fd, tmp = tempfile.mkstemp(prefix=".provider-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as handle:
+            for variable, value in sorted(values.items()):
+                handle.write(f"{variable}={value}\n")
+        os.replace(tmp, directory / ".env")
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def saved_key(variable="NVIDIA_API_KEY"):
+    return read_keys().get(variable)
+
+
+def key_file_status():
+    try:
+        saved = read_keys()
+    except (OSError, ValueError):
+        return {provider: "Okunamadı" for provider in PROVIDERS}
+    return {provider: "Kayıtlı" if provider in saved else "Henüz girilmedi"
+            for provider in PROVIDERS}
+
+
+def note_shell(note):
+    return ["/bin/bash", "--noprofile", "--norc", "-c",
+            'printf "%s\\n\\n" "$1"; exec /bin/bash --noprofile --norc -i',
+            "ajan-atolyesi", note]
+
+
+def agent_for(role):
+    agent = role.removeprefix("setup-")
+    return agent if agent in ("claude", "codex") else None
+
+
+def tmux_role(role):
+    return "evren-cli" if role == "evren-cli" else agent_for(role)
+
+
+ATOLYE_TMUX_NAMES = ("aa-codex", "aa-claude", "aa-evren-cli")
+PUBLIC_TMUX_OWNER = "ajan-atolyesi-public-v1"
+
+
+def tmux_candidates():
+    tmux = shutil.which("tmux")
+    if not tmux:
+        return {}
+    try:
+        result = subprocess.run([tmux, "list-sessions", "-F", "#{session_name} #{session_id}"],
+                                capture_output=True, text=True, timeout=0.8)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    sessions = {}
+    if result.returncode == 0:
+        for line in result.stdout.splitlines():
+            name, _, session_id = line.partition(" ")
+            if name in ATOLYE_TMUX_NAMES and re.fullmatch(r"\$[0-9]+", session_id):
+                sessions[name] = (tmux, session_id)
+    return sessions
+
+
+def trusted_session(name, target):
+    if name == "aa-evren-cli":
+        return True  # The separate EVREN launcher has no unsafe mode.
+    binary, session_id = target
+    for variable, expected in (("AA_ATOLYE_OWNER", PUBLIC_TMUX_OWNER),
+                               ("AA_SETUP_MODE", "normal")):
+        try:
+            result = subprocess.run([binary, "show-environment", "-t", session_id, variable],
+                                    capture_output=True, text=True, timeout=0.8)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if result.returncode or result.stdout.rstrip("\n") != f"{variable}={expected}":
+            return False
+    return True
+
+
+def atolye_sessions():
+    return {name: target for name, target in tmux_candidates().items()
+            if trusted_session(name, target)}
+
+
+def session_attachment(agent):
+    name = f"aa-{agent}"
+    if name not in ATOLYE_TMUX_NAMES:
+        return "absent", None
+    target = tmux_candidates().get(name)
+    if target is None:
+        return "absent", None
+    return ("trusted", target) if trusted_session(name, target) else ("blocked", None)
+
+
+def named_session(agent):
+    return session_attachment(agent)[1]
+
+
+PI_TRUST_NOTICE = (
+    "Pi ve çalıştırdığı araçlar NVIDIA anahtarına erişebilir. "
+    "Klasördeki talimatlar ve göndereceğin içerik NVIDIA’ya iletilebilir. "
+    "Yalnızca kendi kodunu veya güvendiğin bir klasörü aç. "
+    "İlk denemede uygulamayla gelen örnek klasörü kullan; anahtarları sohbete yazma."
+)
+
+
+def session_reminder(sessions):
+    live = ", ".join(name for name in ATOLYE_TMUX_NAMES if name in sessions)
+    return (
+        "Ajan Atölyesi oturum hatırlatıcısı\n\n"
+        f"Hatırlatıcı açıldığında görülen tmux hedefleri: {live or 'doğrulanmış açık hedef yok'}.\n"
+        "Olası hedefler: aa-codex (Codex), aa-claude (Claude), aa-evren-cli (EVREN DSH CLI). "
+        "Pi, DSH Web ve normal Terminal bu uygulamada birer tmux hedefi değildir.\n\n"
+        "Yalnız kullanıcı başka oturuma mesaj göndermeni istediğinde gönder. "
+        "Önce normal tmux sunucusunda tam adı ve açık paneli yeniden kontrol et. "
+        "Seçili proje klasörü ile açık panelin klasörü aynı olmayabilir; gerekiyorsa ikisini de doğrula. "
+        "Benzer adlı, test veya başka sunucudaki bir oturuma geçme. "
+        "Açık tmux oturumu, ajanın girişe hazır olduğu anlamına gelmez. "
+        "Hedef kesin değilse veya meşgulse dur ve bunu kullanıcıya söyle.\n\n"
+        "Doğrulanan hedefe mesajı bir kez gönder. Mesajın panele ulaşması, "
+        "yanıtın tamamlandığı anlamına gelmez. Yeni çıktı veya hata görmeden tamamlandı deme; "
+        "kısa bir beklemeden sonra otomatik yeniden gönderme."
+    )
+
+
+def session_pane_path(target):
+    if not target:
+        return None
+    binary, session_id = target
+    try:
+        result = subprocess.run([binary, "display-message", "-p", "-t", session_id,
+                                 "#{pane_current_path}"],
+                                capture_output=True, text=True, timeout=0.8)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    path = result.stdout.rstrip("\n")
+    return path if result.returncode == 0 and path.startswith("/") and "\n" not in path else None
+
+
+def session_command(role, mode="normal", setup_selection=None, session_id=None):
+    if mode not in ("normal", "existing"):
+        raise ValueError("Geçersiz izin modu")
+    setup = role in ("setup-claude", "setup-codex") and mode != "existing"
+    if (setup and setup_selection not in ("pi", "evren", "both")) or (not setup and setup_selection is not None):
+        raise ValueError("Kurulum için en az bir sağlayıcı seç")
+    if session_id is not None and (mode != "existing" or not agent_for(role)
+                                   or not re.fullmatch(r"\$[0-9]+", session_id)):
+        raise ValueError("Geçersiz oturum kimliği")
+    if role == "evren-cli" and mode in ("normal", "existing"):
+        return [str(ROOT / "bin/ajan-dsh-pane")]
+    agent = agent_for(role)
+    if agent:
+        return [str(ROOT / "bin/ajan-kur"), agent, mode,
+                "setup" if setup else "plain"] + (
+                    [setup_selection] if setup else [session_id] if session_id else [])
+    if mode != "normal":
+        raise ValueError("Bu oturum izin modunu değiştiremez")
+    if role == "pi":
+        return [sys.executable, str(Path(__file__).resolve()), "--pi-terminal"]
+    if role == "evren":
+        return [sys.executable, str(ROOT / "bin/evren-dsh-terminal")]
+    if role == "terminal":
+        shell = os.environ.get("SHELL", "")
+        if not Path(shell).is_absolute() or not Path(shell).is_file() or not os.access(shell, os.X_OK):
+            shell = "/bin/bash"
+        return [shell, "-i"]
+    raise ValueError("Bilinmeyen oturum")
+
+
+def add_nvidia_models(directory):
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = directory / "models.json"
+    if path.is_symlink():
+        raise OSError("Model ayar dosyası sembolik bağlantı olamaz.")
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        settings = {}
+    if not isinstance(settings, dict):
+        raise ValueError("Model ayar dosyası beklenen biçimde değil.")
+    providers = settings.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        raise ValueError("Model sağlayıcı ayarı beklenen biçimde değil.")
+    nvidia = providers.setdefault("nvidia", {})
+    if not isinstance(nvidia, dict) or nvidia.get("baseUrl", NVIDIA_URL) != NVIDIA_URL:
+        raise ValueError("NVIDIA sağlayıcı adresi değişmiş.")
+    models = nvidia.setdefault("models", [])
+    if not isinstance(models, list) or not all(isinstance(m, dict) for m in models):
+        raise ValueError("NVIDIA model listesi beklenen biçimde değil.")
+    bundled = {
+        KIMI_ID: ("Kimi K3.1 Pro", 1000000),
+        MINIMAX_ID: ("MiniMax M3.1 Flash", 262144),
+    }
+    changed = False
+    for model_id, (name, context_window) in bundled.items():
+        existing = next((m for m in models if m.get("id") == model_id), None)
+        if existing is not None:
+            if existing.get("baseUrl", NVIDIA_URL) != NVIDIA_URL:
+                raise ValueError("NVIDIA modeli başka bir adrese ayarlanmış.")
+            continue
+        models.append({"id": model_id, "name": name,
+                       "baseUrl": NVIDIA_URL, "api": "openai-completions",
+                       "input": ["text", "image"], "reasoning": True,
+                       "contextWindow": context_window, "maxTokens": 16384})
+        changed = True
+    if not changed:
+        return
+    fd, tmp = tempfile.mkstemp(prefix=".models-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(settings, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def pi_prefix():
+    return config_dir() / "pi-install"
+
+
+def pi_binary():
+    local = pi_prefix() / "bin/pi"
+    return str(local) if local.is_file() and os.access(local, os.X_OK) else shutil.which("pi")
+
+
+def dsh_prefix():
+    return config_dir() / "dsh-install"
+
+
+def dsh_binary():
+    local = dsh_prefix() / "bin/dsh"
+    return str(local) if local.is_file() and os.access(local, os.X_OK) else shutil.which("dsh")
+
+
+def npm_install_command(prefix, package, min_version):
+    node, npm = shutil.which("node"), shutil.which("npm")
+    if not (node and npm):
+        return None
+    try:
+        version = subprocess.check_output([node, "--version"], text=True, timeout=2).strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", version)
+    if not match or tuple(map(int, match.groups())) < min_version:
+        return None
+    return [npm, "install", "-g", "--ignore-scripts", "--no-audit", "--no-fund",
+            "--registry=https://registry.npmjs.org/", "--globalconfig=/dev/null",
+            "--fetch-retries=0", "--fetch-timeout=60000", "--prefix", str(prefix), package]
+
+
+def installed_package_ready(prefix, binary, package, env):
+    path = prefix / "bin" / binary
+    if not path.is_file() or not os.access(path, os.X_OK):
+        return False
+    try:
+        version = subprocess.check_output([str(path), "--version"], text=True,
+                                          stderr=subprocess.DEVNULL, env=env, timeout=3).strip()
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return version == package.rsplit("@", 1)[-1]
+
+
+def pi_install_command():
+    return npm_install_command(pi_prefix(), PI_PACKAGE, (22, 19, 0))
+
+
+def dsh_install_command():
+    return npm_install_command(dsh_prefix(), DSH_PACKAGE, (24, 9, 0))
+
+
+def pi_terminal():
+    binary = pi_binary()
+    if not binary:
+        args = note_shell("Pi kurulu değil. Kurulum: https://docs.pi.dev/latest/quickstart")
+        os.execv(args[0], args)
+    try:
+        key = saved_key()
+    except (OSError, ValueError):
+        args = note_shell("NVIDIA ayarını okuyamadım. Atölye anahtarları ekranından dosyanın konumuna bak. Kurtarma: " + FAQ_URL)
+        os.execv(args[0], args)
+    if key:
+        # Do not carry unrelated provider tokens or SSH agent sockets into Pi.
+        keep = ("HOME", "USER", "LOGNAME", "PATH", "SHELL", "TERM", "COLORTERM",
+                "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TMP", "TEMP")
+        env = {name: os.environ[name] for name in keep if name in os.environ}
+        env["NVIDIA_API_KEY"] = key
+        directory = config_dir() / "pi"
+        try:
+            add_nvidia_models(directory)
+        except (OSError, ValueError):
+            args = note_shell("NVIDIA model ayarları eklenemedi. Mevcut dosya değiştirilmedi.")
+            os.execv(args[0], args)
+        env["PI_CODING_AGENT_DIR"] = str(directory)
+        os.execve(binary, [binary, "--models", NVIDIA_SCOPE, "--model", "nvidia/" + MINIMAX_ID, "--thinking", "low", "--no-extensions"], env)
+    os.execv(binary, [binary])
+
+
+def session_icons():
+    path = config_dir() / "appearance.json"
+    if path.is_symlink():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    roles, icons = dict(OPTIONS).values(), dict(ICONS).values()
+    return {role: icon for role, icon in value.items() if role in roles and icon in icons}
+
+
+def save_session_icon(role, icon):
+    if role not in dict(OPTIONS).values() or (icon is not None and icon not in dict(ICONS).values()):
+        raise ValueError("Bilinmeyen oturum veya simge")
+    directory = config_dir()
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    st = directory.lstat()
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+        raise OSError("Ayar klasörü kullanılamadı.")
+    values = session_icons()
+    if icon is None:
+        values.pop(role, None)
+    else:
+        values[role] = icon
+    fd, tmp = tempfile.mkstemp(prefix=".appearance-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(values, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        os.replace(tmp, directory / "appearance.json")
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+DESKTOP_CSS = b"""
+.aa-caption { font-size: 0.91em; }
+button.aa-row { padding: 5px 10px; min-height: 25px; }
+button.aa-row.aa-selected { font-weight: bold; box-shadow: inset 2px 0 @theme_selected_bg_color; }
+button.aa-close { min-width: 22px; padding: 3px 4px; }
+"""
+
+
+def make_window(Gtk, Vte, Gio, GLib, smoke_terminal=False):
+    win = Gtk.Window(title="Ajan Atölyesi")
+    win.set_wmclass("ajan-atolyesi", "ajan-atolyesi")
+    win.set_default_size(1000, 650)
+    win.connect("destroy", Gtk.main_quit)
+    from gi.repository import Gdk, GdkPixbuf
+    icon_path = str(ROOT / "assets/ajan-atolyesi.svg")
+    try:
+        win.set_icon_from_file(icon_path)
+        brand_icon = GdkPixbuf.Pixbuf.new_from_file_at_scale(icon_path, 25, 25, True)
+    except GLib.Error:
+        brand_icon = None
+    css = Gtk.CssProvider()
+    css.load_from_data(DESKTOP_CSS)
+    Gtk.StyleContext.add_provider_for_screen(win.get_screen(), css,
+                                             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    layout = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+    win.add(layout)
+
+    left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
+    left.set_border_width(12)
+    left.set_size_request(240, -1)
+
+    def set_row_icon(button, name):
+        image = Gtk.Image.new_from_icon_name(name, Gtk.IconSize.MENU)
+        image.set_margin_end(8)
+        button.set_image(image)
+        button.set_always_show_image(True)
+
+    def row_button(label, icon=None, setup=False):
+        button = Gtk.Button(label=label)
+        style = button.get_style_context()
+        style.add_class("aa-row")
+        style.add_class("flat")
+        if setup:
+            style.add_class("aa-setup")
+        if icon:
+            set_row_icon(button, icon)
+        button.set_alignment(0.0, 0.5)
+        return button
+    layout.pack_start(left, False, False, 0)
+    layout.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 0)
+
+    brand = Gtk.Box(spacing=8)
+    glyph = (Gtk.Image.new_from_pixbuf(brand_icon) if brand_icon is not None
+             else Gtk.Image.new_from_icon_name("utilities-terminal-symbolic", Gtk.IconSize.BUTTON))
+    brand.pack_start(glyph, False, False, 0)
+    title = Gtk.Label(xalign=0)
+    title.set_markup("<b>Ajan Atölyesi</b>")
+    brand.pack_start(title, True, True, 0)
+    reminder_button = Gtk.Button()
+    reminder_button.set_image(Gtk.Image.new_from_icon_name("document-edit-symbolic", Gtk.IconSize.BUTTON))
+    reminder_button.get_style_context().add_class("flat")
+    reminder_button.set_tooltip_text("Oturum hatırlatıcısı")
+    reminder_button.get_accessible().set_name("Oturum hatırlatıcısı")
+    brand.pack_end(reminder_button, False, False, 0)
+    about_button = Gtk.Button()
+    about_button.set_image(Gtk.Image.new_from_icon_name("dialog-information-symbolic", Gtk.IconSize.BUTTON))
+    about_button.get_style_context().add_class("flat")
+    about_button.set_tooltip_text("Ajan Atölyesi hakkında")
+    about_button.get_accessible().set_name("Ajan Atölyesi hakkında")
+    brand.pack_end(about_button, False, False, 0)
+
+    def show_about(_button):
+        dialog = Gtk.AboutDialog(transient_for=win, modal=True)
+        dialog.set_program_name("Ajan Atölyesi")
+        dialog.set_version(source_version())
+        dialog.set_comments(ABOUT_TEXT)
+        dialog.set_website(REPO_URL)
+        dialog.set_website_label("GitHub deposu ve kurulum rehberi")
+        try:
+            logo = GdkPixbuf.Pixbuf.new_from_file_at_scale(icon_path, 80, 80, True)
+        except GLib.Error:
+            pass
+        else:
+            dialog.set_logo(logo)
+        dialog.run()
+        dialog.destroy()
+
+    about_button.connect("clicked", show_about)
+    left.pack_start(brand, False, False, 9)
+    keys_group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+    left.pack_start(keys_group, False, False, 0)
+    left.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 4)
+    project_label = Gtk.Label(label="Proje klasörü", xalign=0)
+    project_label.get_style_context().add_class("aa-caption")
+    left.pack_start(project_label, False, False, 0)
+    chooser = Gtk.FileChooserButton.new("Proje klasörünü seç", Gtk.FileChooserAction.SELECT_FOLDER)
+    project_label.set_mnemonic_widget(chooser)
+    if Path.cwd() != Path.home():
+        chooser.set_filename(str(Path.cwd()))
+    left.pack_start(chooser, False, False, 3)
+    active_folder = Gtk.Label(xalign=0, wrap=True)
+    active_folder.set_max_width_chars(26)
+    active_folder.set_no_show_all(True)
+    active_folder.get_style_context().add_class("aa-caption")
+    left.pack_start(active_folder, False, False, 0)
+
+    right = Gtk.Stack()
+    layout.pack_start(right, True, True, 0)
+    empty = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+    empty.set_halign(Gtk.Align.CENTER)
+    empty.set_valign(Gtk.Align.CENTER)
+    empty_title = Gtk.Label()
+    empty_title.set_markup("<big><b>Bir oturum seç</b></big>")
+    empty.pack_start(empty_title, False, False, 0)
+    empty.pack_start(Gtk.Label(label="İlk kullanım: anahtarını kaydet, sonra Pi · NVIDIA, DSH CLI veya DSH Web’e tıkla.", wrap=True), False, False, 0)
+    empty.pack_start(Gtk.Label(label="Claude veya Codex hesabı şart değil.", wrap=True), False, False, 0)
+    open_keys = Gtk.Button(label="Anahtarları aç")
+    empty.pack_start(open_keys, False, False, 6)
+    local_faq = Gtk.Button(label="Sık sorulan sorular")
+    empty.pack_start(local_faq, False, False, 0)
+
+    def show_local_faq(_button):
+        try:
+            content = (ROOT / "docs/sss.md").read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            content = "Yerel yardım dosyası okunamadı. Aşağıdaki GitHub bağlantısını kullan."
+        dialog = Gtk.Dialog(title="Sık sorulan sorular", transient_for=win, modal=True)
+        dialog.set_default_size(640, 460)
+        dialog.add_button("Kapat", Gtk.ResponseType.CLOSE)
+        scroll = Gtk.ScrolledWindow()
+        view = Gtk.TextView(editable=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        view.set_left_margin(14)
+        view.set_right_margin(14)
+        view.set_top_margin(10)
+        view.get_buffer().set_text(content)
+        scroll.add(view)
+        area = dialog.get_content_area()
+        area.pack_start(scroll, True, True, 0)
+        area.pack_start(Gtk.LinkButton.new_with_label(FAQ_URL, "GitHub’da aç"), False, False, 4)
+        dialog.show_all()
+        dialog.run()
+        dialog.destroy()
+
+    local_faq.connect("clicked", show_local_faq)
+    right.add_named(empty, "start")
+    install_pi_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
+    install_pi_page.pack_start(Gtk.Label(label="Pi bu bilgisayarda bulunamadı."), False, False, 0)
+    install_detail = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
+    install_pi_page.pack_start(install_detail, False, False, 0)
+    install_pi_action = Gtk.Button(label="Pi’yi kur")
+    install_pi_page.pack_start(install_pi_action, False, False, 0)
+    install_pi_page.pack_start(Gtk.LinkButton.new_with_label(PI_GUIDE, "Pi’nin resmî kurulum rehberi"), False, False, 0)
+    right.add_named(install_pi_page, "pi-install")
+    evren_setup = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8,
+                         halign=Gtk.Align.CENTER, valign=Gtk.Align.CENTER)
+    evren_setup.pack_start(Gtk.Label(label="EVREN · DeepSeek V4.1 Flash"), False, False, 0)
+    evren_detail = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
+    evren_setup.pack_start(evren_detail, False, False, 0)
+    install_dsh_action = Gtk.Button(label="dsh’yi kur")
+    evren_setup.pack_start(install_dsh_action, False, False, 0)
+    open_evren_key = Gtk.Button(label="EVREN anahtarı ekranını aç")
+    evren_setup.pack_start(open_evren_key, False, False, 0)
+    evren_setup.pack_start(Gtk.LinkButton.new_with_label(DSH_GUIDE, "dsh’nin resmî rehberi"), False, False, 0)
+    right.add_named(evren_setup, "evren-setup")
+    pages = {}
+    running = set()
+    dots = {}
+    timers = {}
+    controls = []
+    selected = None
+    selected_role = None
+
+    def show_session_folder(role):
+        target = named_session(tmux_role(role)) if role else None
+        path = session_pane_path(target)
+        if path is None:
+            active_folder.hide()
+            return
+        chosen = chooser.get_filename()
+        different = chosen and os.path.realpath(chosen) != os.path.realpath(path)
+        folder_name = Path(path).name or "/"
+        active_folder.set_text(("Açık oturum başka klasörde: " if different else "Açık oturum: ")
+                               + folder_name)
+        active_folder.set_tooltip_text(path)
+        active_folder.show()
+
+    chooser.connect("file-set", lambda *_: show_session_folder(selected_role))
+
+    def select_button(button):
+        nonlocal selected, selected_role
+        if selected is not None:
+            selected.get_style_context().remove_class("aa-selected")
+        if button is not None:
+            button.get_style_context().add_class("aa-selected")
+        selected = button
+        selected_role = next((role for role, item in buttons_by_role.items() if item is button), None)
+        show_session_folder(selected_role)
+
+    buttons_by_role = {}
+
+    def indicate(role, state):
+        color, detail = STATES[state]
+        dot = dots[role]
+        dot.set_markup(f'<span foreground="{color}">●</span>')
+        dot.set_tooltip_text(detail)
+
+    def clear_activity_timer(role):
+        pending = timers.pop(role, None)
+        if pending is not None:
+            GLib.source_remove(pending)
+
+    def terminal_activity(_terminal, role):
+        if role not in running:
+            return
+        indicate(role, "active")
+        clear_activity_timer(role)
+
+        def wake():
+            timers.pop(role, None)
+            if role in running:
+                indicate(role, "ready")
+            return GLib.SOURCE_REMOVE
+
+        timers[role] = GLib.timeout_add(900, wake)
+
+    def process_closed(role):
+        running.discard(role)
+        if selected_role == role:
+            active_folder.hide()
+        clear_activity_timer(role)
+        indicate(role, "closed")
+    status = Gtk.Label(xalign=0, wrap=True)
+    status.get_style_context().add_class("aa-caption")
+    status.set_max_width_chars(25)
+
+    def show_reminder(_button):
+        text = session_reminder(atolye_sessions())
+        dialog = Gtk.Dialog(title="Oturum hatırlatıcısı", transient_for=win, modal=True)
+        dialog.set_default_size(540, 385)
+        dialog.add_button("Kapat", Gtk.ResponseType.CLOSE)
+        dialog.add_button("Panoya kopyala", Gtk.ResponseType.OK)
+        area = dialog.get_content_area()
+        area.set_border_width(14)
+        area.set_spacing(8)
+        note = Gtk.Label(label="Kopyalayıp bir ajanın mesaj alanına yapıştır. Açık oturumun sistem ayarı değişmez.",
+                         xalign=0, wrap=True)
+        area.pack_start(note, False, False, 0)
+        scroll = Gtk.ScrolledWindow()
+        view = Gtk.TextView(editable=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        view.set_left_margin(8)
+        view.set_right_margin(8)
+        view.get_buffer().set_text(text)
+        scroll.add(view)
+        area.pack_start(scroll, True, True, 0)
+        dialog.show_all()
+        if dialog.run() == Gtk.ResponseType.OK:
+            clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+            clipboard.set_text(text, -1)
+            clipboard.store()
+            status.set_text("Oturum hatırlatıcısı kopyalandı.")
+        dialog.destroy()
+
+    reminder_button.connect("clicked", show_reminder)
+
+    def choose_setup_mode(setup=False):
+        if not setup:
+            return "normal", None
+        dialog = Gtk.MessageDialog(
+            transient_for=win, modal=True, message_type=Gtk.MessageType.QUESTION,
+            text="Neyi kurmak istiyorsun?")
+        dialog.set_title("Kurulum seçenekleri")
+        dialog.format_secondary_text(
+            "Ajanın normal izin kontrolleri açık kalır. Yalnızca işaretlediğin yollar "
+            "kurulum isteğine eklenir.")
+        dialog.add_button("Vazgeç", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Normal aç", Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
+        group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        group.set_margin_top(12)
+        pi = Gtk.CheckButton(label="Pi + NVIDIA")
+        evren = Gtk.CheckButton(label="EVREN + DeepSeek (DSH CLI ve Web)")
+        for item in (pi, evren):
+            group.pack_start(item, False, False, 0)
+        dialog.get_message_area().pack_start(group, False, False, 0)
+
+        def update_choices(*_):
+            dialog.set_response_sensitive(Gtk.ResponseType.OK, pi.get_active() or evren.get_active())
+
+        pi.connect("toggled", update_choices)
+        evren.connect("toggled", update_choices)
+        update_choices()
+        group.show_all()
+        response = dialog.run()
+        selected = (pi.get_active(), evren.get_active())
+        selection = {(True, False): "pi", (False, True): "evren", (True, True): "both"}.get(selected)
+        dialog.destroy()
+        return ("normal", selection) if response == Gtk.ResponseType.OK and selection else (None, None)
+
+    def confirm_pi_folder(folder):
+        dialog = Gtk.MessageDialog(
+            transient_for=win, modal=True, message_type=Gtk.MessageType.WARNING,
+            text="Pi · NVIDIA yalnız güvenilir klasörde açılmalı")
+        dialog.set_title("Pi · NVIDIA güvenilir klasör")
+        dialog.format_secondary_text(f"{folder}\n\n{PI_TRUST_NOTICE}")
+        dialog.add_button("Vazgeç", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Bu klasörde aç", Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
+        accepted = dialog.run() == Gtk.ResponseType.OK
+        dialog.destroy()
+        return accepted
+
+    def install_tool(button, provider):
+        is_pi = provider == "pi"
+        title = "Pi" if is_pi else "dsh"
+        action = install_pi_action if is_pi else install_dsh_action
+        detail = install_detail if is_pi else evren_detail
+        page = install_pi_page if is_pi else evren_setup
+        version = "22.19" if is_pi else "24.9"
+        command = pi_install_command() if is_pi else dsh_install_command()
+        if not command:
+            detail.set_text(f"Node.js {version} veya üzeri ve npm gerekli. Önce alttaki rehberi aç.")
+            action.set_sensitive(False)
+            return
+        action.set_sensitive(False)
+        detail.set_text(f"{title} kuruluyor… Anahtarların bu kurulumda kullanılmaz.")
+        try:
+            # npm should not inherit app credentials or project-specific settings.
+            env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL", "TMPDIR") if k in os.environ}
+            workdir = tempfile.TemporaryDirectory()
+            env["HOME"] = workdir.name
+            child = subprocess.Popen(command, cwd=workdir.name, env=env, stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            detail.set_text("Kurulum başlatılamadı. Alttaki rehberden manuel kurulumu aç.")
+            action.set_sensitive(True)
+            return
+
+        def check_install():
+            result = child.poll()
+            if result is None:
+                return GLib.SOURCE_CONTINUE
+            ready = result == 0 and installed_package_ready(
+                pi_prefix() if is_pi else dsh_prefix(), "pi" if is_pi else "dsh",
+                PI_PACKAGE if is_pi else DSH_PACKAGE, env)
+            workdir.cleanup()
+            action.set_sensitive(True)
+            if ready:
+                status.set_text("Pi kuruldu. Şimdi Pi · NVIDIA’ya tıkla." if is_pi else "dsh kuruldu. Şimdi DSH CLI veya DSH Web’e tıkla.")
+                if right.get_visible_child() is page:
+                    right.set_visible_child(empty)
+            else:
+                detail.set_text("Kurulum tamamlanmadı. Rehberden manuel kurulumu aç veya tekrar dene.")
+            return GLib.SOURCE_REMOVE
+
+        GLib.timeout_add(220, check_install)
+
+    install_pi_action.connect("clicked", install_tool, "pi")
+    install_dsh_action.connect("clicked", install_tool, "dsh")
+
+    def open_session(button, role):
+        if role in pages and role in running:
+            select_button(button)
+            right.set_visible_child(pages[role])
+            status.set_text("Açık oturuma dönüldü; kurulum yeniden gönderilmedi."
+                            if role.startswith("setup-") else button.get_label())
+            pages[role].get_child().grab_focus()
+            return
+        if role in ("evren", "evren-cli") and not smoke_terminal:
+            state = key_file_status()["EVREN_API_KEY"]
+            binary = dsh_binary() if state == "Kayıtlı" else None
+            # Do not launch a different global version against the pinned profile.
+            try:
+                version = subprocess.check_output([binary, "--version"], text=True, timeout=1.5,
+                                                  stderr=subprocess.DEVNULL).strip() if binary else ""
+            except (OSError, subprocess.SubprocessError):
+                version = ""
+            if state != "Kayıtlı" or version != "0.2.2-rc.5":
+                select_button(button)
+                right.set_visible_child(evren_setup)
+                install_dsh_action.set_visible(state == "Kayıtlı" and version != "0.2.2-rc.5")
+                open_evren_key.set_visible(state != "Kayıtlı")
+                if install_dsh_action.get_sensitive():
+                    evren_detail.set_text("Önce EVREN anahtarını kaydet." if state != "Kayıtlı" else
+                                          "dsh’yi kur, ardından istediğin DSH satırına tekrar tıkla.")
+                return
+        if role == "pi" and not pi_binary():
+            select_button(button)
+            right.set_visible_child(install_pi_page)
+            if install_pi_action.get_sensitive():
+                install_detail.set_text("Claude veya Codex gerekmez. Kurulum yalnız bu kullanıcıya yapılır.")
+            return
+        agent = agent_for(role)
+        tmux_target = tmux_role(role)
+        attachment, identified = session_attachment(tmux_target)
+        if attachment == "blocked":
+            status.set_text("Bu adlı oturum Atölye’nin normal oturumu olarak doğrulanamadı. "
+                            "Bağlanılmadı; mevcut oturum değiştirilmedi.")
+            return
+        existing = attachment == "trusted"
+        setup = role in ("setup-claude", "setup-codex")
+        folder = chooser.get_filename() or (str(Path.home()) if setup or existing or smoke_terminal or role in ("evren", "terminal") else None)
+        if not folder or not Path(folder).is_dir():
+            status.set_text("Soldaki klasör seçiciden bir proje klasörü seç.")
+            chooser.grab_focus()
+            return
+        if agent and not existing and not shutil.which(agent):
+            status.set_text(f"{agent.capitalize()} bulunamadı. İlk kullanım için Pi · NVIDIA’yı seçebilirsin.")
+            return
+        if role == "pi" and not smoke_terminal:
+            if not confirm_pi_folder(folder):
+                status.set_text("Pi açılmadı.")
+                return
+        mode, setup_selection = ("existing", None) if existing else (
+            choose_setup_mode(setup=setup) if agent else ("normal", None))
+        if mode is None:
+            return
+        if role in pages:
+            right.remove(pages.pop(role))
+        terminal = Vte.Terminal()
+        terminal.set_scrollback_lines(5000)
+        select_button(button)
+        scroller = Gtk.ScrolledWindow()
+        scroller.add(terminal)
+        pages[role] = scroller
+        right.add_named(scroller, role)
+        scroller.show_all()
+        right.set_visible_child(scroller)
+        terminal.grab_focus()
+        running.add(role)
+        label = button.get_label()
+        status.set_text("Açık oturuma bağlanılıyor; kurulum gönderilmeyecek."
+                        if existing and role.startswith("setup-")
+                        else label)
+        terminal.connect("child-exited", lambda *_: process_closed(role))
+        terminal.connect("contents-changed", terminal_activity, role)
+        terminal_activity(terminal, role)
+
+        def spawned(_terminal, _pid, error, *_):
+            if error:
+                status.set_text("Oturum açılamadı.")
+                process_closed(role)
+            elif tmux_target:
+                def refresh_folder():
+                    if selected_role == role and role in running:
+                        show_session_folder(role)
+                    return GLib.SOURCE_REMOVE
+                GLib.timeout_add(320, refresh_folder)
+        if role == "evren":
+            folder = str(Path.home())
+        expected_id = identified[1] if agent and identified else None
+        command = note_shell("Test terminali") if smoke_terminal and role == "evren" else (
+            session_command(role, mode, setup_selection, session_id=expected_id))
+        terminal.spawn_async(Vte.PtyFlags.DEFAULT, folder, command, None,
+                             GLib.SpawnFlags.DEFAULT, None, None, -1, None, spawned, None)
+
+    def close_session(_button, role, label):
+        agent = tmux_role(role)
+        target = named_session(agent)
+        if role not in running and not target:
+            status.set_text("Kapatılacak açık oturum yok.")
+            if role in pages:
+                right.remove(pages.pop(role))
+            return
+        name = f"aa-{agent}" if target else label
+        dialog = Gtk.MessageDialog(transient_for=win, modal=True,
+                                   message_type=Gtk.MessageType.WARNING,
+                                   text=f"{name} kapatılsın mı?")
+        dialog.format_secondary_text("Oturum kapanır ve içindeki çalışan işler durabilir.")
+        dialog.add_button("Vazgeç", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Oturumu kapat", Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
+        response = dialog.run()
+        dialog.destroy()
+        if response != Gtk.ResponseType.OK:
+            return
+        if target:
+            if named_session(agent) != target:
+                status.set_text("Oturum değişti. Hiçbir oturum kapatılmadı.")
+                return
+            try:
+                result = subprocess.run([target[0], "kill-session", "-t", target[1]],
+                                        capture_output=True, timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                status.set_text("tmux oturumu kapatılamadı.")
+                return
+            if result.returncode:
+                status.set_text("tmux oturumu kapatılamadı.")
+                return
+        roles = [item for _, item in OPTIONS if tmux_role(item) == agent] if target else [role]
+        for item in roles:
+            page = pages.pop(item, None)
+            process_closed(item)
+            if page is not None:
+                page.destroy()
+        if not right.get_visible_child():
+            right.set_visible_child(empty)
+        if right.get_visible_child() is empty:
+            select_button(None)
+        status.set_text(f"{name} kapatıldı.")
+
+    key_buttons = {}
+    key_dots = {}
+
+    def key_state_color(label, state):
+        fg = label.get_style_context().get_color(Gtk.StateFlags.NORMAL)
+        dark = 0.2126 * fg.red + 0.7152 * fg.green + 0.0722 * fg.blue > 0.55
+        if state == "Kayıtlı":
+            return "#62DEA0" if dark else "#087546"
+        if state == "Okunamadı":
+            return "#F5BE64" if dark else "#8A5600"
+        return None
+
+    def style_key_state(label, state, name=None, dot=False):
+        color = key_state_color(label, state)
+        if dot:
+            color = color or "#343943"
+            label.set_markup(f'<span foreground="{color}">●</span>')
+            label.set_tooltip_text(f"{name} anahtarı: {state}")
+        else:
+            status_text = GLib.markup_escape_text(state)
+            if color:
+                status_text = f'<span foreground="{color}" weight="semibold">{status_text}</span>'
+            prefix = f"{GLib.markup_escape_text(name)}: " if name else ""
+            label.set_markup(prefix + status_text)
+
+    def update_key_buttons():
+        for variable, state in key_file_status().items():
+            if variable in key_buttons:
+                name = PROVIDERS[variable][0]
+                description = f"{name} anahtarı: {state}"
+                key_buttons[variable].set_tooltip_text(description)
+                key_buttons[variable].get_accessible().set_description(description)
+                style_key_state(key_dots[variable], state, name, dot=True)
+
+    def key_settings(_button, variable):
+        name, _ = PROVIDERS[variable]
+        dialog = Gtk.Dialog(title=f"{name} anahtarı", transient_for=win, modal=True)
+        dialog.add_button("Vazgeç", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Kaydet", Gtk.ResponseType.OK)
+        area = dialog.get_content_area()
+        area.set_spacing(10)
+        area.set_border_width(16)
+        detail = ("Yalnız Atölye'den açılan Pi'ye verilir." if name == "NVIDIA" else
+                  "Yalnız EVREN · DSH CLI ve DSH Web’de kullanılır.")
+        text = Gtk.Label(label="Anahtar proje dışında yerel .env dosyasında tutulur.\n" + detail, xalign=0)
+        entry = Gtk.Entry(visibility=False)
+        entry.set_input_purpose(Gtk.InputPurpose.PASSWORD)
+        entry.set_placeholder_text("nvapi-…" if name == "NVIDIA" else "EVREN API anahtarı")
+        entry.set_activates_default(True)
+        dialog.set_default_response(Gtk.ResponseType.OK)
+        warning = Gtk.Label(xalign=0)
+        saved_state = Gtk.Label(xalign=0)
+        style_key_state(saved_state, key_file_status()[variable])
+        if name == "NVIDIA":
+            area.pack_start(Gtk.LinkButton.new_with_label(
+                "https://build.nvidia.com/moonshotai/kimi-k3_1-pro", "NVIDIA’da API anahtarı al"), False, False, 0)
+        help_link = Gtk.LinkButton.new_with_label(FAQ_URL + "#anahtar-kaydedilemiyor-ne-yapmalıyım", "Anahtar kaydetme yardımı")
+        for widget in (text, saved_state, entry, warning, help_link):
+            area.pack_start(widget, False, False, 0)
+        dialog.show_all()
+        while dialog.run() == Gtk.ResponseType.OK:
+            try:
+                save_key(entry.get_text().strip(), variable)
+            except ValueError as exc:
+                warning.set_text(str(exc))
+            except OSError:
+                warning.set_text("Ayar dosyasına yazılamadı. Durum “Okunamadı” ise alttaki yardıma bak.")
+            else:
+                status.set_text(f"{name} anahtarı kaydedildi.")
+                update_key_buttons()
+                break
+        entry.set_text("")
+        dialog.destroy()
+
+    icon_settings = session_icons()
+
+    def choose_icon(button, role, default):
+        dialog = Gtk.Dialog(title="Simgeyi değiştir", transient_for=win, modal=True)
+        dialog.add_button("Vazgeç", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Varsayılana dön", Gtk.ResponseType.REJECT)
+        area = dialog.get_content_area()
+        area.set_border_width(16)
+        grid = Gtk.Grid(row_spacing=8, column_spacing=8)
+        area.add(grid)
+        for index, (label, icon) in enumerate(ICONS):
+            item = Gtk.Button()
+            item.set_tooltip_text(label)
+            item.get_accessible().set_name(label)
+            image = Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.DIALOG)
+            image.set_pixel_size(24)
+            item.set_image(image)
+            item.set_size_request(52, 46)
+            item.connect("clicked", lambda _item, response: dialog.response(response), 1000 + index)
+            grid.attach(item, index % 3, index // 3, 1, 1)
+        dialog.show_all()
+        response = dialog.run()
+        dialog.destroy()
+        if response == Gtk.ResponseType.REJECT:
+            icon = None
+        elif 1000 <= response < 1000 + len(ICONS):
+            icon = ICONS[response - 1000][1]
+        else:
+            return
+        try:
+            save_session_icon(role, icon)
+        except OSError:
+            status.set_text("Simge kaydedilemedi.")
+            return
+        set_row_icon(button, icon or default)
+
+    def copy_session_identity(_item, role):
+        agent = tmux_role(role)
+        target = named_session(agent)
+        if not target:
+            status.set_text("Oturum kapalı. Önce oturumu aç.")
+            return
+        identity = f"aa-{agent}"
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clipboard.set_text(identity, -1)
+        clipboard.store()
+        path = session_pane_path(target)
+        suffix = f" · {Path(path).name or '/'}" if path else ""
+        status.set_text(f"{identity} panoya kopyalandı{suffix}.")
+        status.set_tooltip_text(path)
+
+    def icon_menu(button, event, role, default):
+        menu = Gtk.Menu()
+        menu.attach_to_widget(button, None)
+        item = Gtk.MenuItem(label="Simgeyi değiştir")
+        item.connect("activate", lambda *_: choose_icon(button, role, default))
+        menu.append(item)
+        agent = tmux_role(role)
+        copy = Gtk.MenuItem(label="Oturum kimliğini kopyala")
+        target = named_session(agent)
+        copy.set_sensitive(bool(target))
+        if target:
+            path = session_pane_path(target)
+            if path:
+                copy.set_tooltip_text("Açık panelin klasörü: " + path)
+        else:
+            copy.set_tooltip_text("Önce oturumu aç." if agent else "Bu satırın bir tmux oturum kimliği yok.")
+        copy.connect("activate", copy_session_identity, role)
+        menu.append(copy)
+        menu.connect("selection-done", lambda *_: menu.destroy())
+        menu.show_all()
+        if event is None:
+            menu.popup_at_widget(button, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None)
+        else:
+            menu.popup_at_pointer(event)
+        return True
+
+    def right_click(button, event, role, default):
+        if event.button != 3:
+            return False
+        return icon_menu(button, event, role, default)
+
+    for index, (label, role) in enumerate(OPTIONS):
+        if index == 2:
+            left.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 4)
+        default = "system-run-symbolic" if index < 2 else "utilities-terminal-symbolic"
+        button = row_button(label, icon_settings.get(role, default), setup=index < 2)
+        buttons_by_role[role] = button
+        button.connect("clicked", open_session, role)
+        button.connect("button-press-event", right_click, role, default)
+        button.connect("popup-menu", lambda widget, r, d: icon_menu(widget, None, r, d), role, default)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        dot = Gtk.Label()
+        dots[role] = dot
+        indicate(role, "closed")
+        close = Gtk.Button(label="×")
+        close.get_style_context().add_class("aa-close")
+        close.set_tooltip_text(f"{label}: oturumu kapat")
+        close.get_accessible().set_name(f"{label}: oturumu kapat")
+        close.set_relief(Gtk.ReliefStyle.NONE)
+        close.connect("clicked", close_session, role, label)
+        row.pack_start(button, True, True, 0)
+        row.pack_start(close, False, False, 0)
+        row.pack_start(dot, False, False, 0)
+        left.pack_start(row, False, False, 0)
+        controls.append(button)
+    left.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 4)
+
+
+    for variable, (name, _) in PROVIDERS.items():
+        button = row_button(f"{name} anahtarı", "dialog-password-symbolic")
+        button.connect("clicked", key_settings, variable)
+        key_buttons[variable] = button
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        dot = Gtk.Label()
+        key_dots[variable] = dot
+        row.pack_start(button, True, True, 0)
+        row.pack_start(dot, False, False, 0)
+        keys_group.pack_start(row, False, False, 0)
+        controls.append(button)
+
+    open_evren_key.connect("clicked", key_settings, "EVREN_API_KEY")
+    update_key_buttons()
+
+    def show_key_file(_button):
+        dialog = Gtk.Dialog(title="Atölye anahtarları", transient_for=win, modal=True)
+        dialog.add_button("Kapat", Gtk.ResponseType.CLOSE)
+        dialog.add_button("NVIDIA’yı düzenle", 1001)
+        dialog.add_button("EVREN’i düzenle", 1002)
+        area = dialog.get_content_area()
+        area.set_spacing(8)
+        area.set_border_width(16)
+        description = Gtk.Label(label="Atölye’nin kullandığı dosya bu. Projede .env oluşturman gerekmiyor.", xalign=0, wrap=True)
+        file_path = Gtk.Label(label=str(config_dir() / ".env"), xalign=0, selectable=True)
+        for widget in (description, file_path):
+            area.pack_start(widget, False, False, 0)
+        for variable, state in key_file_status().items():
+            label = Gtk.Label(xalign=0)
+            style_key_state(label, state, PROVIDERS[variable][0])
+            area.pack_start(label, False, False, 0)
+        dialog.show_all()
+        response = dialog.run()
+        dialog.destroy()
+        target = {1001: "NVIDIA_API_KEY", 1002: "EVREN_API_KEY"}.get(response)
+        if target:
+            key_buttons[target].clicked()
+
+    open_keys.connect("clicked", show_key_file)
+    button = row_button("Atölye anahtarları (.env)", "dialog-password-symbolic")
+    button.connect("clicked", show_key_file)
+    left.pack_start(button, False, False, 0)
+    controls.append(button)
+    legend = Gtk.Label(xalign=0, wrap=True)
+    legend.set_markup('● Kapalı    <span foreground="#36a86b">●</span> Açık\n'
+                      '<span foreground="#3987f7">●</span> Terminal etkinliği')
+    legend.get_style_context().add_class("aa-caption")
+    left.pack_end(legend, False, False, 5)
+    left.pack_start(status, False, False, 10)
+    win.show_all()
+    return win, controls, right
+
+
+def main():
+    if sys.argv[1:] == ["--version"]:
+        print(source_version())
+        return 0
+    if sys.argv[1:] == ["--pi-terminal"]:
+        return pi_terminal()
+    try:
+        import gi
+        gi.require_version("Gtk", "3.0")
+        gi.require_version("Vte", "2.91")
+        from gi.repository import Gtk, Vte, Gio, GLib
+    except (ImportError, ValueError):
+        print("Ajan Atölyesi için Python GI, GTK 3 ve VTE 2.91 gerekli.", file=sys.stderr)
+        return 1
+    GLib.set_prgname("ajan-atolyesi")
+    if not Gtk.init_check()[0]:
+        print("Pencereyi grafik masaüstü oturumunda aç.", file=sys.stderr)
+        return 1
+    smoke = sys.argv[1:] == ["--check-terminal"]
+    window, controls, stack = make_window(Gtk, Vte, Gio, GLib, smoke_terminal=smoke)
+    if sys.argv[1:] in (["--check-ui"], ["--check-terminal"]):
+        assert [w.get_label() for w in controls] == [name for name, _ in OPTIONS] + ["NVIDIA anahtarı", "EVREN anahtarı", "Atölye anahtarları (.env)"]
+        for button in controls[:len(OPTIONS)]:
+            row = button.get_parent().get_children()
+            assert row[0] is button and row[1].get_label() == "×" and isinstance(row[2], Gtk.Label)
+            assert button.get_style_context().has_class("aa-row")
+            assert button.get_image().get_margin_end() == 8
+        keys_group = controls[len(OPTIONS)].get_parent().get_parent()
+        rows = [item.get_children() for item in keys_group.get_children()]
+        assert [row[0].get_label() for row in rows] == ["NVIDIA anahtarı", "EVREN anahtarı"]
+        assert all(isinstance(row[1], Gtk.Label) and row[1].get_text() == "●" for row in rows)
+        assert keys_group.get_parent().get_children()[1] is keys_group
+        assert [role for _, role in OPTIONS[2:]] == ["codex", "claude", "pi", "evren-cli", "evren", "terminal"]
+        evren_button = controls[next(i for i, (_, role) in enumerate(OPTIONS) if role == "evren")]
+        if smoke:
+            evren_button.clicked()
+            terminal = stack.get_visible_child().get_child()
+            loop = GLib.MainLoop()
+            GLib.timeout_add(700, lambda: (loop.quit(), False)[1])
+            loop.run()
+            assert isinstance(terminal, Vte.Terminal) and terminal.get_pty() is not None
+        else:
+            evren_button.clicked()
+            assert stack.get_visible_child_name() in ("evren-setup", "evren")
+            assert evren_button.get_style_context().has_class("aa-selected")
+        window.hide()
+        print("GTK: sol oturum listesi ve terminal paneli doğrulandı.")
+        return 0
+    Gtk.main()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

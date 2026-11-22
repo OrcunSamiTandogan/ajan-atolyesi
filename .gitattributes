@@ -1,0 +1,4 @@
+kur-windows.cmd -text whitespace=cr-at-eol
+ac-windows.cmd -text whitespace=cr-at-eol
+
+SOURCE_REVISION export-subst

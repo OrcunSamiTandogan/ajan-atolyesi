@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Sürüm gösterimi: yalnız bu deponun temiz ve tam master geçmişini say.
+set -euo pipefail
+root="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+read_version() {
+  local value
+  value="$(cat "$root/VERSION" 2>/dev/null)" || value=
+  [[ "$value" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || return 1
+  printf '%s' "$value"
+}
+
+version="$(read_version)" || version=bilinmiyor
+build= revision= state=unknown
+git_at_root() (
+  unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_NAMESPACE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+  export GIT_OPTIONAL_LOCKS=0 GIT_NO_REPLACE_OBJECTS=1
+  git -c core.fsmonitor=false -C "$root" "$@"
+)
+is_revision() { [[ "$1" =~ ^[0-9a-f]{40}$ ]]; }
+is_build() { [[ "$1" =~ ^[1-9][0-9]*$ ]]; }
+
+if [[ -e "$root/.git" ]] && command -v git >/dev/null 2>&1; then
+  top="$(git_at_root rev-parse --show-toplevel 2>/dev/null)" || top=
+  origin="$(git_at_root config --get remote.origin.url 2>/dev/null | LC_ALL=C tr '[:upper:]' '[:lower:]')" || origin=
+  case "${origin%.git}" in
+    git@github.com:orcunsamitandogan/ajan-atolyesi|https://github.com/orcunsamitandogan/ajan-atolyesi|ssh://git@github.com/orcunsamitandogan/ajan-atolyesi)
+      if [[ "$top" == "$root" ]]; then
+        head="$(git_at_root rev-parse --verify HEAD 2>/dev/null)" || head=
+        if is_revision "$head"; then
+          revision="$head"; state=revision
+          status="$(git_at_root status --porcelain --untracked-files=normal 2>/dev/null)" || status='?'
+          shallow="$(git_at_root rev-parse --is-shallow-repository 2>/dev/null)" || shallow=true
+          ref=refs/heads/master
+          git_at_root show-ref --verify --quiet "$ref" || ref=refs/remotes/origin/master
+          if [[ -n "$status" ]]; then
+            state=dirty
+          elif [[ "$shallow" == false && "$version" != bilinmiyor ]] &&
+               git_at_root rev-list --first-parent "$ref" 2>/dev/null | grep -Fx "$head" >/dev/null; then
+            count="$(git_at_root rev-list --first-parent --count "$head" 2>/dev/null)" || count=
+            if is_build "$count"; then build="$count"; state=master; fi
+          fi
+        fi
+      fi
+      ;;
+  esac
+elif [[ -f "$root/.ajan-surum-bilgisi" ]]; then
+  # Kurucu, kaynak Git bilgisi kaybolmadan doğrulanmış verileri kopyalar.
+  {
+    IFS= read -r b && IFS= read -r r && IFS= read -r s
+  } < "$root/.ajan-surum-bilgisi" || { b= r= s=; }
+  if [[ "$r" == revision=* ]] && is_revision "${r#revision=}"; then
+    revision="${r#revision=}"
+    if [[ "$s" == 'state=dirty' ]]; then
+      state=dirty
+    elif [[ "$s" == 'state=master' && "$b" == build=* ]] && is_build "${b#build=}"; then
+      state=master; build="${b#build=}"
+    else
+      state=revision
+    fi
+  fi
+elif [[ -f "$root/SOURCE_REVISION" ]]; then
+  archive="$(cat "$root/SOURCE_REVISION" 2>/dev/null)" || archive=
+  if is_revision "$archive"; then revision="$archive"; state=revision; fi
+fi
+
+case "${1:---display}" in
+  --display)
+    printf '%s' "$version"
+    if [[ -n "$build" ]]; then printf ' · Derleme %s' "$build"; else printf ' · Derleme bilinmiyor'; fi
+    if [[ -n "$revision" ]]; then printf ' · %s' "${revision:0:7}"; fi
+    if [[ "$state" == dirty ]]; then printf ' · Yerel değişiklikler'; fi
+    printf '\n'
+    ;;
+  --version) printf '%s\n' "$version" ;;
+  --build) printf '%s\n' "$build" ;;
+  --metadata) printf 'build=%s\nrevision=%s\nstate=%s\n' "$build" "$revision" "$state" ;;
+  *) printf 'Kullanım: ajan-surum [--display|--version|--build|--metadata]\n' >&2; exit 2 ;;
+esac

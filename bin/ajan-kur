@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+render_setup_prompt() {
+  local selection=$1
+  case "$selection" in pi|evren|both|ask) ;; *) return 2 ;; esac
+  cat "$here/../KURULUM-PROMPTU.md" || return
+  if [[ "$selection" == ask ]]; then
+    printf '\nSeçim belirtilmedi. Pi + NVIDIA, EVREN + DeepSeek veya ikisini mi istediğini sor. Yanıt gelmeden kurma.\n'
+    return
+  fi
+  printf '\nKullanıcının seçimi kesin; tekrar seçim sorma. Yalnız aşağıdaki maddeleri uygula.\n'
+  if [[ "$selection" == pi || "$selection" == both ]]; then
+    printf '%s\n' '- Pi + NVIDIA: Node.js 22.19+ ve npm. Pi sürümü ve kurulum için https://docs.pi.dev/latest/quickstart. Sonraki adım: NVIDIA anahtarı → Kaydet → Pi · NVIDIA.'
+  fi
+  if [[ "$selection" == evren || "$selection" == both ]]; then
+    printf '%s\n' '- EVREN + DeepSeek: Node.js 24.9+ ve npm. DSH CLI için tmux. dsh sürümü ve kurulum için https://github.com/deepseek-ai/deepseek-harness/tree/master/apps/cli. Sonraki adım: EVREN anahtarı → Kaydet → EVREN · DSH CLI veya EVREN · DSH Web.'
+  fi
+}
+if [[ ${1:-} == --print-setup-prompt ]]; then
+  [[ $# == 2 ]] || exit 2
+  render_setup_prompt "$2"
+  exit
+fi
+phase=attach
+if [[ ${1:-} == --pane ]]; then phase=pane; shift; fi
+case "${1:-}" in
+  claude) session=aa-claude; guide=https://code.claude.com/docs/en/setup ;;
+  codex) session=aa-codex; guide=https://learn.chatgpt.com/docs/auth ;;
+  *) printf 'Kullanım: ajan-kur {claude|codex} [normal|existing] [setup|plain] [pi|evren|both]\n'; exit 2 ;;
+esac
+mode=${2:-normal}
+case "$mode" in normal|existing) ;; *) exit 2 ;; esac
+if [[ "$phase" == pane ]]; then
+  [[ "$mode" != existing ]] || exit 2
+  status=0
+  flags=()
+  agent=$3
+  case "${4:-setup}" in
+    setup) prompt="$(render_setup_prompt "${5:-ask}")"; flags+=("$prompt") ;;
+    plain) [[ -z ${5:-} ]] || exit 2 ;;
+    *) exit 2 ;;
+  esac
+  "$agent" "${flags[@]}" || status=$?
+  printf '\nAjan kapandı (çıkış %s). Oturum açık.\n' "$status"
+  exec /bin/bash --noprofile --norc -i
+fi
+hold() { exec /bin/bash --noprofile --norc -i; }
+owner=ajan-atolyesi-public-v1
+kind=${3:-setup}
+selection=${4:-}
+if [[ "$mode" == existing ]]; then
+  [[ "$kind" == plain ]] || exit 2
+  expected=$selection
+  [[ -z "$expected" || "$expected" =~ ^\$[0-9]+$ ]] || exit 2
+  selection=
+fi
+case "$kind:$selection" in setup:|setup:pi|setup:evren|setup:both|plain:) ;; *) exit 2 ;; esac
+
+checked_id() {
+  local listed name id other found=''
+  listed="$(tmux list-sessions -F '#{session_name} #{session_id}' 2>/dev/null)" || return 1
+  while IFS=' ' read -r name id other; do
+    if [[ "$name" == "$session" && "$id" =~ ^\$[0-9]+$ && -z "$other" ]]; then
+      [[ -z "$found" ]] || return 1
+      found=$id
+    fi
+  done <<< "$listed"
+  [[ -n "$found" ]] || return 1
+  [[ "$(tmux show-environment -t "$found" AA_ATOLYE_OWNER 2>/dev/null)" == "AA_ATOLYE_OWNER=$owner" ]] || return 1
+  [[ "$(tmux show-environment -t "$found" AA_SETUP_MODE 2>/dev/null)" == 'AA_SETUP_MODE=normal' ]] || return 1
+  printf '%s\n' "$found"
+}
+attach_checked() {
+  local id
+  if ! id="$(checked_id)" || [[ -n ${expected:-} && "$id" != "$expected" ]]; then
+    printf 'Mevcut %s oturumu Atölye’nin normal oturumu olarak doğrulanamadı. Bağlanılmadı.\n' "$session" >&2
+    exit 1
+  fi
+  if [[ -n ${TMUX:-} ]]; then exec tmux switch-client -t "$id"; fi
+  exec tmux attach-session -t "$id"
+}
+if [[ "$mode" == existing ]]; then
+  command -v tmux >/dev/null || exit 1
+  attach_checked
+fi
+if ! command -v tmux >/dev/null; then
+  if ! command -v apt-get >/dev/null || ! command -v sudo >/dev/null; then
+    printf 'Önce sisteminin paket yöneticisinden tmux kurup bu düğmeye yeniden bas.\n'
+    hold
+  fi
+  printf 'tmux eksik. Ubuntu paketlerinden kurulsun mu? [e/H] '
+  read -r answer || exit 1
+  case "$answer" in e|E|evet|Evet) ;; *) exit 0 ;; esac
+  sudo apt-get install tmux || hold
+  hash -r
+fi
+if tmux has-session -t "=$session" 2>/dev/null; then
+  attach_checked
+fi
+if ! agent=$(command -v "$1"); then
+  printf '%s bulunamadı. Önce resmî aracı kur: %s\n' "$1" "$guide"
+  hold
+fi
+if [[ -n ${TMUX:-} ]]; then
+  tmux new-session -d -s "$session" -c "$PWD" -e "AA_SETUP_MODE=normal" -e "AA_ATOLYE_OWNER=$owner" "$here/ajan-kur" --pane "$1" "$mode" "$agent" "$kind" "$selection"
+  attach_checked
+fi
+exec tmux new-session -s "$session" -c "$PWD" -e "AA_SETUP_MODE=normal" -e "AA_ATOLYE_OWNER=$owner" "$here/ajan-kur" --pane "$1" "$mode" "$agent" "$kind" "$selection"

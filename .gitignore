@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Yerel oturum/veri ve test çıktıları repoya girmez.
+__pycache__/
+*.py[cod]
+*.log
+*.sqlite
+*.sqlite3
+credentials.json
+auth.json
+.DS_Store
+Thumbs.db

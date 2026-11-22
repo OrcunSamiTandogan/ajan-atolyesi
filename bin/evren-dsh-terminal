@@ -1,0 +1,602 @@
+#!/usr/bin/env python3
+"""Launch DeepSeek’s official local Harness UI; the child only gets a loopback token."""
+import hmac
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+import os
+from pathlib import Path
+import queue
+import re
+import runpy
+import secrets
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import uuid
+from urllib.error import HTTPError, URLError
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+
+MODEL = "deepseek-v4.1-flash"
+ROUTED_MODEL = "deepseek/" + MODEL
+HOST = "https://evren-llmapi.ssyz.org.tr"
+ENDPOINT = HOST + "/v1/messages"
+SUPPORTED = "0.2.2-rc.5"
+MAX_BODY = 256 * 1024
+MAX_RESPONSE = 2 * 1024 * 1024
+SSE_END = re.compile(rb"\r?\n\r?\n")
+SSE_TYPES = {"message_start", "content_block_start", "content_block_delta",
+             "content_block_stop", "message_delta", "message_stop", "ping", "error"}
+SESSION = re.compile(r"session-[A-Za-z0-9-]{1,100}")
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def open_evren(request, timeout):
+    return build_opener(NoRedirect(), ProxyHandler({})).open(request, timeout=timeout)
+
+
+def safe_stream(response):
+    """Never forward tool events to the local runner."""
+    total = 0
+    pending = b""
+    while chunk := response.read1(8192):
+        total += len(chunk)
+        pending += chunk
+        if total > MAX_RESPONSE or len(pending) > MAX_BODY:
+            raise OSError("response limit")
+        while end := SSE_END.search(pending):
+            frame, pending = pending[:end.start()], pending[end.end():]
+            for line in frame.splitlines():
+                if not line.startswith(b"data:"):
+                    continue
+                data = json.loads(line[5:].strip())
+                block = data.get("content_block", {})
+                delta = data.get("delta", {})
+                message = data.get("message", {})
+                if (data.get("type") not in SSE_TYPES
+                        or block.get("type") not in (None, "text", "thinking", "redacted_thinking")
+                        or delta.get("type") not in (None, "text_delta", "thinking_delta", "signature_delta")
+                        or delta.get("stop_reason") == "tool_use"
+                        or message.get("content") not in (None, [])):
+                    raise ValueError("non-text block")
+            yield frame + b"\n\n"
+    if pending.strip():
+        raise ValueError("incomplete stream")
+
+
+def text_messages(messages):
+    """Project native Harness history to plain user/assistant text only."""
+    if not isinstance(messages, list):
+        raise ValueError("missing messages")
+    clean = []
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("role") not in ("user", "assistant"):
+            raise ValueError("unknown role")
+        role, content = msg["role"], msg.get("content")
+        if isinstance(content, str):
+            if content:
+                clean.append({"role": role, "content": content})
+            continue
+        if not isinstance(content, list):
+            raise ValueError("unknown content")
+        blocks = []
+        for block in content:
+            if not isinstance(block, dict):
+                raise ValueError("unknown block")
+            kind = block.get("type")
+            if kind == "text" and isinstance(block.get("text"), str):
+                if block["text"]:
+                    blocks.append({"type": "text", "text": block["text"]})
+            elif role == "assistant" and kind in ("thinking", "redacted_thinking"):
+                continue
+            else:
+                raise ValueError("non-text input")
+        if blocks:
+            clean.append({"role": role, "content": blocks})
+    if not clean or clean[-1]["role"] != "user":
+        raise ValueError("missing user input")
+    return clean
+
+
+def bridge_handler(key, local_key, record_error, send_upstream=open_evren):
+    class Bridge(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def reject(self, status, detail, track=True):
+            if track:
+                record_error(detail)
+            payload = json.dumps({"type": "error", "error": {
+                "type": "api_error", "message": detail}}).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_POST(self):
+            self.connection.settimeout(5)
+            auth = self.headers.get("Authorization", "")
+            api_key = self.headers.get("x-api-key", "")
+            if not (hmac.compare_digest(auth.encode(), ("Bearer " + local_key).encode())
+                    or hmac.compare_digest(api_key.encode(), local_key.encode())):
+                return self.reject(401, "Yerel oturum geçersiz.", False)
+            if self.path != "/v1/messages":
+                return self.reject(404, "Bu EVREN yolu desteklenmiyor.")
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= MAX_BODY:
+                    return self.reject(413, "Mesaj çok uzun.")
+                body = json.loads(self.rfile.read(size))
+                if not isinstance(body, dict) or body.get("model") != MODEL:
+                    return self.reject(400, "Yalnız DeepSeek V4.1 Flash kullanılabilir.")
+                tokens = body.get("max_tokens", 1024)
+                if type(tokens) is not int or tokens < 1:
+                    return self.reject(400, "Geçersiz yanıt uzunluğu.")
+                # Do not forward tool definitions or tool results. This is a text-only bridge.
+                try:
+                    messages = text_messages(body.get("messages"))
+                except ValueError:
+                    return self.reject(400, "Bu oturum yalnız metin mesajlarını destekler.")
+                payload = {"model": MODEL, "messages": messages,
+                           "max_tokens": min(tokens, 1024), "stream": True,
+                           "thinking": {"type": "disabled"}}
+                request = Request(ENDPOINT, data=json.dumps(payload).encode(),
+                                  headers={"Authorization": "Bearer " + key,
+                                           "Content-Type": "application/json",
+                                           "anthropic-version": "2023-06-01"})
+            except (ValueError, OSError, UnicodeError):
+                return self.reject(400, "Mesaj okunamadı.")
+            try:
+                response = send_upstream(request, 40)
+            except HTTPError as exc:
+                errors = {401: "EVREN anahtarı doğrulanmadı.", 403: "Bu hesapta EVREN model erişimi yok.",
+                          404: "DeepSeek V4.1 Flash bu uçta bulunamadı.",
+                          429: "EVREN istek sınırına takıldı. Biraz bekleyip tekrar dene."}
+                status = exc.code if exc.code in errors else 502
+                return self.reject(status, errors.get(exc.code, f"EVREN yanıt vermedi (HTTP {exc.code})."))
+            except (OSError, URLError):
+                return self.reject(504, "EVREN bağlantısı zaman aşımına uğradı veya kurulamadı.")
+            with response:
+                if response.headers.get("X-Evren-Routed-Model") != ROUTED_MODEL:
+                    return self.reject(502, "EVREN yanıtının DeepSeek V4.1 Flash’tan geldiği doğrulanamadı.")
+                content_type = response.headers.get("Content-Type", "").split(";")[0]
+                if content_type != "text/event-stream":
+                    return self.reject(502, "EVREN beklenmeyen bir yanıt döndürdü.")
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                try:
+                    for chunk in safe_stream(response):
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                except (ValueError, AttributeError, OSError):
+                    record_error("EVREN yanıtı tamamlanmadı. Tekrar dene.")
+
+    return Bridge
+
+
+def overlay(port):
+    return f"""- id: agent-default-model
+  config:
+    provider: deepseek-official
+    model: {MODEL}
+- id: llm-deepseek
+  config:
+    baseURL: http://127.0.0.1:{port}/v1
+    thinking: disabled
+    reasoningEffort: off
+    maxTokens: 1024
+    models:
+      - id: {MODEL}
+        name: DeepSeek V4.1 Flash
+""" + "".join(f"- id: {plugin}\n  disabled: true\n" for plugin in (
+        "session-title-llm", "tool-web", "web-search-deepseek", "web-deepseek-api",
+        "web-fetch-http", "llm-deepseek-account", "llm-pi-ai",
+    ))
+
+
+def web_overlay(port, folder):
+    # Native first-use workspace must remain inside the temporary session,
+    # never the user’s real Documents folder.
+    return overlay(port) + (
+        "- id: workspace-controller\n  config:\n    documentsDirectory: "
+        + json.dumps(str(folder / "documents")) + "\n"
+        "- id: preset-standard\n  config:\n    id: standard\n    plugins: []\n"
+    ) + "".join(f"- id: {plugin}\n  disabled: true\n" for plugin in (
+        "preset-ptc", "preset-minimal", "preset-cordis",
+    ))
+
+
+def isolated_env(folder, local_key):
+    area = str(folder)
+    env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL", "TERM") if k in os.environ}
+    env.update(HOME=area, XDG_CONFIG_HOME=area, XDG_DATA_HOME=area, XDG_CACHE_HOME=area,
+               DSH_HOME=str(folder / "dsh"), TMPDIR=area, DEEPSEEK_API_KEY=local_key, DSH_TELEMETRY_DISABLED="1")
+    env["DSH_PERMISSION_MODE"] = "read-only"
+    return env
+
+
+def run_turn(binary, patch, folder, env, task, session):
+    command = [binary, "--profile", "headless", "--patch", str(patch), "--json",
+               "--permission-mode", "read-only", "--approval-policy", "never"]
+    if session:
+        command.extend(["--session-id", session])
+    command.append("-")
+    result = subprocess.run(command, input=task, cwd=folder, env=env, encoding="utf-8",
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=105)
+    events = []
+    for line in result.stdout.splitlines():
+        try:
+            item = json.loads(line)
+            if isinstance(item, dict):
+                events.append(item)
+        except ValueError:
+            pass
+    return result.returncode, events
+
+
+def summary(events):
+    session, answer, completed = None, None, False
+    for event in events:
+        sid = event.get("sessionId")
+        if isinstance(sid, str) and SESSION.fullmatch(sid):
+            session = sid
+        if event.get("type") == "final":
+            answer, completed = event.get("text"), (event.get("reason") or {}).get("kind") == "completed"
+    return session, answer if completed and isinstance(answer, str) else None
+
+
+def browser_url(line):
+    match = re.fullmatch(r"dsh web: (http://127\.0\.0\.1:([0-9]{1,5})/\?token=[A-Za-z0-9_-]{16,200})",
+                         line.strip())
+    if match and 1 <= int(match.group(2)) <= 65535:
+        return match.group(1)
+    return None
+
+
+def open_browser(url):
+    command = "/usr/bin/open" if sys.platform == "darwin" else shutil.which("xdg-open")
+    if not command:
+        return False
+    try:
+        desktop_env = {name: os.environ[name] for name in (
+            "PATH", "HOME", "USER", "LANG", "LC_ALL", "DISPLAY", "WAYLAND_DISPLAY",
+            "XDG_RUNTIME_DIR", "XDG_CURRENT_DESKTOP", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+            "XDG_DATA_DIRS", "DBUS_SESSION_BUS_ADDRESS", "XAUTHORITY",
+        ) if name in os.environ}
+        subprocess.Popen([command, url], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=desktop_env)
+        return True
+    except OSError:
+        return False
+
+
+def web_command(binary, patch):
+    return [binary, "--profile", "web", "--patch", str(patch), "--host", "127.0.0.1",
+            "--port", "0", "--no-open"]
+
+
+def run_web(binary, patch, folder, env, *, launch_browser):
+    print("DeepSeek’in resmî Harness arayüzü başlatılıyor…", flush=True)
+    print("Bu EVREN profili sohbet içindir; proje ve web araçları kapalı.", flush=True)
+    process = subprocess.Popen(web_command(binary, patch), cwd=folder, env=env,
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, encoding="utf-8", errors="replace",
+                               start_new_session=True)
+    shown = False
+    try:
+        for line in process.stdout:
+            if not shown and (url := browser_url(line)):
+                shown = True
+                if launch_browser and open_browser(url):
+                    print("Resmî DeepSeek Harness tarayıcıya gönderildi. İlk kullanımda Continue, sonra Default workspace yanında yeni oturumu seç. Kapatmak için Ctrl+C.", flush=True)
+                elif not launch_browser:
+                    print("DeepSeek Harness hazır.", flush=True)
+                else:
+                    print("Varsayılan tarayıcı açılamadı. Tarayıcını ayarlayıp EVREN · DSH Web’e yeniden tıkla.", flush=True)
+                    return 1
+        status = process.wait()
+        if not shown:
+            print("DeepSeek Harness başlatılamadı. Node ve dsh sürümünü kontrol et.", flush=True)
+        return status
+    finally:
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=3)
+            except ProcessLookupError:
+                pass
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+        process.stdout.close()
+
+
+def plain_terminal_text(value):
+    return "".join(c for c in value if c in "\n\t" or (ord(c) >= 32 and not 127 <= ord(c) <= 159))
+
+
+def sdk_overlay(port, folder):
+    return overlay(port) + (
+        "- id: sandbox-policy\n  config:\n    mode: read-only\n    workspaceRoot: "
+        + json.dumps(str(folder)) + "\n"
+        "- id: tool-fs\n  disabled: true\n"
+        "- id: tool-working-directory\n  disabled: true\n"
+        "- id: persistent-bash\n  disabled: true\n"
+        "- id: persistent-pwsh\n  disabled: true\n"
+    )
+
+
+def sdk_command(binary, patch):
+    return [binary, "--profile", "sdk-minimal", "--patch", str(patch)]
+
+
+class SdkError(RuntimeError):
+    pass
+
+
+class HarnessSdk:
+    """One official DSH process and one logical session across terminal turns."""
+
+    def __init__(self, process, folder):
+        self.process = process
+        self.folder = folder
+        self.inbox = queue.Queue()
+        self.seq = 0
+        self.new_session()
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def new_session(self):
+        self.session = str(uuid.uuid4())
+
+    def _read(self):
+        for line in self.process.stdout:
+            self.inbox.put(line)
+        self.inbox.put(None)
+
+    def next_frame(self, deadline):
+        while (remaining := deadline - time.monotonic()) > 0:
+            try:
+                line = self.inbox.get(timeout=remaining)
+            except queue.Empty:
+                break
+            if line is None:
+                raise SdkError("DSH SDK kapandı.")
+            try:
+                frame = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(frame, dict):
+                return frame
+        raise SdkError("DSH SDK yanıt süresini aştı.")
+
+    def request(self, method, params, on_frame=lambda _: None, seconds=90):
+        self.seq += 1
+        request_id = self.seq
+        frame = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+        self.process.stdin.write(json.dumps(frame, ensure_ascii=False) + "\n")
+        self.process.stdin.flush()
+        deadline = time.monotonic() + seconds
+        while True:
+            frame = self.next_frame(deadline)
+            if frame.get("id") == request_id and "method" not in frame:
+                if "error" in frame:
+                    err = frame["error"]
+                    code = err.get("code") if isinstance(err, dict) else None
+                    raise SdkError(f"DSH SDK isteği tamamlamadı (kod {code}).")
+                return frame.get("result") or {}
+            on_frame(frame)
+
+    def initialize(self):
+        self.request("initialize", {"cwd": str(self.folder),
+                                    "provider": "deepseek-official", "model": MODEL,
+                                    "maxTokens": 1024, "approvalRequests": False}, seconds=20)
+
+    def turn(self, prompt, emit=print):
+        stats = {}
+        finished = False
+        failed = False
+
+        def observe(frame):
+            nonlocal finished, failed
+            if frame.get("method") != "session.event":
+                return
+            params = frame.get("params") or {}
+            if params.get("sessionId") not in (None, self.session):
+                return
+            event = params.get("event") or {}
+            kind = event.get("type")
+            data = event.get("data") or {}
+            if kind == "assistant/message":
+                for block in (data.get("message") or {}).get("content") or []:
+                    if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str):
+                        emit(plain_terminal_text(block["text"]))
+                usage = data.get("usage") or {}
+                for key in ("inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"):
+                    n = usage.get(key)
+                    if type(n) is int and n >= 0:
+                        stats[key] = stats.get(key, 0) + n
+            elif kind == "turn/end":
+                finished = True
+                failed = failed or (data.get("reason") or {}).get("kind") != "completed"
+            elif kind == "error" or (isinstance(kind, str) and kind.endswith("/error")):
+                failed = True
+
+        self.request("session/prompt", {"sessionId": self.session,
+                      "contentBlocks": [{"type": "text", "text": prompt}]}, observe)
+        self.request("session/wait", {"sessionId": self.session}, observe)
+        return stats, failed or not finished
+
+
+def usage_line(stats):
+    fields = (("cacheReadTokens", "Cache okuma"), ("cacheWriteTokens", "Cache yazma"),
+              ("inputTokens", "Önbelleksiz giriş"), ("outputTokens", "Çıkış"))
+    return " · ".join(f"{label}: {stats[key]:,}" for key, label in fields if key in stats) or "Cache/token sayaçları bildirilmedi."
+
+
+def interactive_cli(binary, patch, folder, env, failures):
+    if sys.stdin.isatty():
+        try:
+            import readline
+        except ImportError:
+            pass
+    print("EVREN · DeepSeek V4.1 Flash | DeepSeek Harness SDK", flush=True)
+    with subprocess.Popen(sdk_command(binary, patch), cwd=folder, env=env,
+                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                          encoding="utf-8", bufsize=1) as process:
+        client = HarnessSdk(process, folder)
+        try:
+            client.initialize()
+            print(f"DSH oturumu: {client.session} · tmux: aa-evren-cli", flush=True)
+            print("Mesaj yaz, Enter’a bas. /new: yeni oturum · /id: kimlik · /exit: çıkış", flush=True)
+            while True:
+                try:
+                    task = input("\nDSH > ").strip()
+                except EOFError:
+                    return 0
+                if task in ("/exit", "/çıkış"):
+                    return 0
+                if task == "/new":
+                    client.new_session()
+                    print(f"DSH oturumu: {client.session}", flush=True)
+                    continue
+                if task == "/id":
+                    print(f"DSH oturumu: {client.session}", flush=True)
+                    continue
+                if not task:
+                    continue
+                if len(task.encode()) > 16000:
+                    print("Mesaj çok uzun. Kısaltıp yeniden gönder.", flush=True)
+                    continue
+                failures.clear()
+                print("EVREN yanıtı bekleniyor…", flush=True)
+                stats, failed = client.turn(task, lambda line: print(line, flush=True))
+                if failed or failures:
+                    print(failures[-1] if failures else "DSH bu turu tamamlamadı.", flush=True)
+                else:
+                    print(usage_line(stats), flush=True)
+        except SdkError as error:
+            message = failures[-1] if failures else str(error)
+            print(message, file=sys.stderr, flush=True)
+            return 1
+        except KeyboardInterrupt:
+            print("\nDSH oturumu kapatılıyor.", flush=True)
+            return 130
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=4)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+
+
+def native_cli_args(args):
+    if args in ([], ["--help"], ["-h"]):
+        return None
+    output = []
+    if args[0] == "--json":
+        output.append("--json")
+        args = args[1:]
+    if not args:
+        raise ValueError("Bir görev yaz veya stdin için - kullan.")
+    task = " ".join(args)
+    if (task.startswith("-") and task != "-") or len(task.encode()) > 16000:
+        raise ValueError("Görev çok uzun veya geçersiz. Uzun metin için stdin: ajan-dsh -")
+    return output + ([task] if task == "-" else ["--", task])
+
+
+def main():
+    args = sys.argv[1:]
+    cli = args[:1] == ["--cli"]
+    interactive = args == ["--interactive"]
+    no_browser = args == ["--no-browser"]
+    if not cli and not interactive and args and not no_browser:
+        return 2
+    if cli:
+        try:
+            cli_args = native_cli_args(args[1:])
+        except ValueError as error:
+            print(error, file=sys.stderr)
+            return 2
+        if cli_args is None:
+            print('Kullanım: ajan-dsh [--json] "Görev"  |  ajan-dsh [--json] - (stdin)')
+            return 0
+    app = runpy.run_path(str(Path(__file__).with_name("ajan-pencere")))
+    try:
+        key = app["saved_key"]("EVREN_API_KEY")
+    except (OSError, ValueError):
+        key = None
+    if not key:
+        print("EVREN anahtarı okunamadı. Soldan EVREN anahtarı ekranını aç.", flush=True)
+        return 1
+    binary = app["dsh_binary"]()
+    if not binary:
+        print("dsh bulunamadı. Soldan EVREN · DSH Web’e tekrar tıkla.", flush=True)
+        return 1
+    with tempfile.TemporaryDirectory(prefix="ajan-evren-") as tmp:
+        folder = Path(tmp)
+        local_key = secrets.token_hex(32)
+        env = isolated_env(folder, local_key)
+        try:
+            version = subprocess.check_output([binary, "--version"], cwd=folder, env=env,
+                                              stderr=subprocess.DEVNULL, text=True, timeout=8).strip()
+        except (subprocess.SubprocessError, OSError):
+            version = ""
+        if version != SUPPORTED:
+            print("Uyumlu dsh (0.2.2-rc.5) açılmadı. EVREN kurulum ekranını kontrol et.", flush=True)
+            return 1
+
+        def stopped(*_):
+            raise SystemExit(0)
+
+        signal.signal(signal.SIGHUP, stopped)
+        signal.signal(signal.SIGTERM, stopped)
+        # Do not log user text, auth or payloads. Print sanitized errors only for CLI.
+        failures = []
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", 0),
+                                         bridge_handler(key, local_key, failures.append if cli or interactive else lambda _: None))
+        except OSError:
+            print("EVREN yerel bağlantısı başlatılamadı. Oturumu kapatıp tekrar aç.", file=sys.stderr, flush=True)
+            return 1
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        patch = folder / "dsh.yml"
+        patch.write_text(sdk_overlay(server.server_port, folder) if interactive else
+                         overlay(server.server_port) if cli else web_overlay(server.server_port, folder))
+        try:
+            if interactive:
+                return interactive_cli(binary, patch, folder, env, failures)
+            if cli:
+                command = [binary, "--profile", "headless", "--patch", str(patch),
+                           "--permission-mode", "read-only", "--approval-policy", "never"] + cli_args
+                result = subprocess.run(command, cwd=folder, env=env, timeout=120)
+                if failures:
+                    print(failures[-1], file=sys.stderr)
+                    return result.returncode or 1
+                return result.returncode
+            return run_web(binary, patch, folder, env, launch_browser=not no_browser)
+        except KeyboardInterrupt:
+            return 130 if cli else 0
+        except subprocess.TimeoutExpired:
+            print("DSH CLI yanıt süresini aştı.", file=sys.stderr)
+            return 124
+        except OSError:
+            print("DeepSeek Harness başlatılamadı.", flush=True)
+            return 1
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

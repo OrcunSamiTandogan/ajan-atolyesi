@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$dir:$HOME/.local/bin:$HOME/bin:$PATH"
+name=aa-evren-cli
+if [[ ${1:-} == --inside ]]; then
+  exec python3 "$dir/evren-dsh-terminal" --interactive
+fi
+if ! command -v tmux >/dev/null; then
+  printf 'tmux bulunamadı. Sistem kurulum rehberinden tmux kur.\n'
+  exec /bin/bash --noprofile --norc -i
+fi
+if ! tmux has-session -t "=$name" 2>/dev/null; then
+  # Creating simultaneously may lose the race; attach only to the exact target.
+  if ! tmux new-session -d -s "$name" -c "$PWD" "$dir/ajan-dsh-pane" --inside; then
+    tmux has-session -t "=$name" 2>/dev/null || exit 1
+  fi
+fi
+if [[ -n ${TMUX:-} ]]; then
+  exec tmux switch-client -t "=$name"
+fi
+exec tmux attach-session -t "=$name"

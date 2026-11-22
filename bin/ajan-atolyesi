@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == --version ]]; then
+  exec "$(dirname -- "${BASH_SOURCE[0]}")/ajan-surum" --display
+fi
+session=ajan-atolyesi
+case "${1:-start}" in
+  start)
+    command -v pi >/dev/null || {
+      printf 'Pi kurulu değil. Kurulum: https://docs.pi.dev/latest/quickstart\n' >&2
+      exit 1
+    }
+    exec pi
+    ;;
+  split|attach) ;;
+  *) printf 'Kullanım: %s [start|split|attach|--version]\n' "$0" >&2; exit 2 ;;
+esac
+command -v tmux >/dev/null || { printf 'İkinci terminal için tmux gerekli.\n' >&2; exit 1; }
+case "$1" in
+  split)
+    if ! tmux has-session -t "=$session" 2>/dev/null; then
+      tmux new-session -d -s "$session" -n akis -c "$PWD"
+      tmux split-window -h -t "$session:akis" -c "$PWD"
+      tmux select-pane -t "$session:akis" -L
+    fi
+    ;;
+  attach) tmux has-session -t "=$session" || { printf 'Önce split çalıştır.\n' >&2; exit 1; } ;;
+esac
+if [[ ! -t 0 || ! -t 1 ]]; then
+  printf 'Oturum hazır: tmux attach-session -t %s\n' "$session"
+elif [[ -n ${TMUX:-} ]]; then
+  exec tmux switch-client -t "=$session"
+else
+  exec tmux attach-session -t "=$session"
+fi

@@ -1,0 +1,57 @@
+name: Ajan Atölyesi CI
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Ubuntu checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Unit tests and shell syntax
+        run: |
+          /usr/bin/python3 -B -m unittest discover -s tests
+          for script in bin/ajan-atolyesi bin/ajan-kur bin/ajan-dsh bin/ajan-dsh-pane masaustune-kur.sh kur-macos.sh; do
+            bash -n "$script"
+          done
+      - name: Install headless UI dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y python3-gi gir1.2-gtk-3.0 gir1.2-vte-2.91 xvfb xauth desktop-file-utils
+      - name: Open the embedded terminal
+        run: |
+          xvfb-run -a ./bin/ajan-pencere --check-ui
+          xvfb-run -a ./bin/ajan-pencere --check-terminal
+          xvfb-run -a /usr/bin/python3 -B tests/check_first_run.py
+      - name: Install and open the packaged Linux launcher
+        shell: bash
+        run: |
+          for tool in desktop-file-validate xvfb-run; do
+            command -v "$tool" >/dev/null || { echo "::error::Missing Linux smoke-test tool: $tool"; exit 1; }
+          done
+          tmp="$(mktemp -d)"
+          trap 'rm -rf -- "$tmp"' EXIT
+          export HOME="$tmp/home"
+          export XDG_DATA_HOME="$HOME/Geçici Alan"
+          export XDG_CONFIG_HOME="$HOME/config"
+          export XDG_CACHE_HOME="$HOME/cache"
+          export XDG_RUNTIME_DIR="$HOME/runtime"
+          mkdir -p "$HOME"
+          mkdir -m 700 "$XDG_RUNTIME_DIR"
+          bash masaustune-kur.sh
+          entry="$XDG_DATA_HOME/applications/ajan-atolyesi.desktop"
+          launcher="$XDG_DATA_HOME/ajan-atolyesi/ac"
+          test -f "$entry" || { echo "::error::Installed desktop entry missing"; exit 1; }
+          test -x "$launcher" || { echo "::error::Installed ac launcher missing or not executable"; exit 1; }
+          desktop-file-validate "$entry"
+          xvfb-run -a "$launcher" --check-terminal
